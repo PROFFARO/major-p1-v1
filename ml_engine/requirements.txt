@@ -1,0 +1,27 @@
+# ─────────────────────────────────────────────────────────────
+# eBPF-ML Security Agent — Python ML Engine Dependencies
+# ─────────────────────────────────────────────────────────────
+
+# Core Scientific Computing
+numpy>=1.26.0
+pandas>=2.2.0
+scipy>=1.12.0
+
+# Machine Learning Models
+scikit-learn>=1.4.0
+xgboost>=2.0.0
+joblib>=1.3.0
+
+# Real-time Agent Integration
+websocket-client>=1.7.0
+requests>=2.31.0
+
+# ML Engine REST API Server
+flask>=3.0.0
+flask-cors>=4.0.0
+
+# LLM Integration (Google Generative AI)
+google-generativeai>=0.8.0
+
+# Utilities
+python-dateutil>=2.9.0
