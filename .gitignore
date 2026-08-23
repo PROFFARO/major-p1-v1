@@ -228,4 +228,4 @@ agent/data/*
 
 agent/ebpf-ml-agent
 
-ml_engine/data_external/adfa_ld/*
+ml_engine/data_external/adfa_ld/
