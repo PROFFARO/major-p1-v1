@@ -184,6 +184,72 @@ AUTO_MITIGATE_CONFIDENCE = 0.85
 # Cooldown period (seconds) before re-blocking same PID
 MITIGATION_COOLDOWN_SECONDS = 30.0
 
+# Require both Random Forest AND XGBoost to agree on threat class
+DUAL_MODEL_CONSENSUS = True
+
+# Dry-run mode: log mitigation decisions without actually blocking
+DRY_RUN_DEFAULT = True
+
+# Maximum number of concurrent active PID blocks (safety cap)
+MAX_ACTIVE_BLOCKS = 50
+
+# Auto-expire: seconds before a blocked PID is automatically unblocked.
+# High-severity threats (RANSOMWARE, KERNEL_ROOTKIT, CRYPTO_MINER, REVERSE_SHELL)
+# are blocked permanently (until manual unblock). Lower-severity threats expire.
+AUTO_EXPIRE_SECONDS = 300  # 5 minutes for low/medium severity
+
+# High-severity threat classes that get PERMANENT blocks (no auto-expire)
+PERMANENT_BLOCK_THREATS = frozenset([
+    "RANSOMWARE",
+    "KERNEL_ROOTKIT",
+    "CRYPTO_MINER",
+    "REVERSE_SHELL",
+    "CONTAINER_ESCAPE",
+])
+
+# Protected PIDs that must NEVER be blocked under any circumstance
+PROTECTED_PIDS = frozenset([
+    0,   # kernel scheduler / swapper
+    1,   # init / systemd
+    2,   # kthreadd (kernel thread parent)
+])
+
+# Protected process names that must NEVER be blocked
+PROTECTED_PROCESS_NAMES = frozenset([
+    "systemd", "systemd-journald", "systemd-logind", "systemd-udevd",
+    "systemd-resolved", "systemd-timesyncd", "systemd-networkd",
+    "init", "kthreadd", "kworker", "ksoftirqd", "kswapd", "rcu_sched",
+    "rcu_preempt", "rcu_bh", "migration", "watchdog", "cpuhp",
+    "irq", "scsi_eh", "kblockd", "md", "edac-poller",
+    "containerd", "containerd-shim", "dockerd", "runc",
+    "kubelet", "kube-proxy", "kube-apiserver", "etcd",
+    "sshd", "login", "getty", "agetty",
+    "journald", "rsyslogd", "syslogd",
+    "dbus-daemon", "dbus-broker",
+    "NetworkManager", "dhclient", "wpa_supplicant",
+    "polkitd", "udisksd", "accounts-daemon",
+    "cron", "crond", "atd",
+    "auditd", "firewalld", "iptables",
+    "ebpf-ml-agent",  # our own agent process
+])
+
+# Audit log file path
+AUDIT_LOG_PATH = ML_ENGINE_DIR / "feedback" / "audit_log.jsonl"
+
+# Rate limiter: max block API requests per second to Go Agent
+RATE_LIMIT_REQUESTS_PER_SECOND = 10
+
+# Background expiry sweep interval (seconds)
+EXPIRY_SWEEP_INTERVAL_SECONDS = 30
+
+# Network threats that trigger automatic IP blocking (when dst_ip is available)
+NETWORK_BLOCK_THREATS = frozenset([
+    "REVERSE_SHELL",
+    "DATA_EXFILTRATION",
+    "DENIAL_OF_SERVICE",
+    "BRUTE_FORCE",
+])
+
 # ─────────────────────────────────────────────────────────────
 # LLM Security Analyst Configuration
 # ─────────────────────────────────────────────────────────────

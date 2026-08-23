@@ -318,6 +318,10 @@ class StreamingExtractor:
         window.ingest(ev)
         return results
 
+    def process_event(self, ev: dict) -> list[tuple[int, np.ndarray, dict]]:
+        """Alias for ingest() method."""
+        return self.ingest(ev)
+
     def flush_all(self) -> list[tuple[int, np.ndarray, dict]]:
         """Flush all active windows and return their feature vectors."""
         results = []
