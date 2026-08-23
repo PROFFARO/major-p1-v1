@@ -29,12 +29,24 @@ func main() {
 	eventBufSize := flag.Int("event-buf", 8192, "Internal event channel buffer depth")
 	flag.Parse()
 
+	// Auto-resolve bpfDir path if default path does not exist
+	resolvedBpfDir := *bpfDir
+	if _, err := os.Stat(resolvedBpfDir); os.IsNotExist(err) {
+		candidates := []string{"../bpf/probes", "./bpf/probes", "../../bpf/probes"}
+		for _, cand := range candidates {
+			if _, err := os.Stat(cand); err == nil {
+				resolvedBpfDir = cand
+				break
+			}
+		}
+	}
+
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.LUTC)
-	log.Printf("[agent] Starting eBPF Security Agent (bpf-dir=%s, listen=%s, dataset-dir=%s)", *bpfDir, *listenAddr, *datasetDir)
+	log.Printf("[agent] Starting eBPF Security Agent (bpf-dir=%s, listen=%s, dataset-dir=%s)", resolvedBpfDir, *listenAddr, *datasetDir)
 
 	// 1. Load and attach eBPF probes
-	log.Printf("[agent] Loading eBPF bytecode objects from %s", *bpfDir)
-	probes, err := agentebpf.LoadAndAttach(*bpfDir)
+	log.Printf("[agent] Loading eBPF bytecode objects from %s", resolvedBpfDir)
+	probes, err := agentebpf.LoadAndAttach(resolvedBpfDir)
 	if err != nil {
 		log.Fatalf("[agent] Failed to load eBPF probes: %v", err)
 	}
@@ -42,7 +54,7 @@ func main() {
 
 	// 2. Attach Traffic Control (TC) network classifiers
 	tcAttacher := agentebpf.NewTCAttacher()
-	netObjPath := filepath.Join(*bpfDir, "net_filter.bpf.o")
+	netObjPath := filepath.Join(resolvedBpfDir, "net_filter.bpf.o")
 	if err := tcAttacher.AttachAllInterfaces(probes.NetFilter, netObjPath); err != nil {
 		log.Printf("[agent] TC classifier attach warning: %v", err)
 	}

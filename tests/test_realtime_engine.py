@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 
 import sys
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ml_engine.inference.realtime_engine import RealtimeIngestionEngine
 from ml_engine.feedback.mitigator import MitigationController

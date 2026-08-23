@@ -132,7 +132,7 @@ class AuditLogger:
         self._action_count = 0
 
     def record(self, action: MitigationAction) -> None:
-        """Append a MitigationAction to the audit log file."""
+        """Append a MitigationAction to the audit log file and SQLite WAL store."""
         try:
             with open(self.log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(action.to_dict(), default=str) + "\n")
@@ -142,6 +142,25 @@ class AuditLogger:
                 action.action_id[:8], action.pid,
                 action.threat_name, action.action_taken,
             )
+
+            # Persist to SQLite WAL store
+            try:
+                from ml_engine.storage import SQLiteWALManager, MitigationAuditRecord
+                sqlite_mgr = SQLiteWALManager()
+                rec = MitigationAuditRecord(
+                    timestamp=action.timestamp,
+                    pid=action.pid,
+                    threat_name=action.threat_name,
+                    action_taken=action.action_taken,
+                    confidence=action.confidence,
+                    success=action.success,
+                    dry_run=action.dry_run,
+                    details=action.reason,
+                )
+                sqlite_mgr.insert_mitigation_audit(rec)
+            except Exception as sql_err:
+                logger.debug("Failed to record audit action to SQLite: %s", sql_err)
+
         except Exception as e:
             logger.error("Failed to write audit log: %s", e)
 

@@ -39,6 +39,7 @@ from ml_engine.preprocessing.feature_extractor import StreamingExtractor
 from ml_engine.models.detector import ThreatDetector
 from ml_engine.feedback.mitigator import MitigationController
 from ml_engine.feedback.actions import MitigationAction
+from ml_engine.storage import DatabaseManager, FeatureWindowRecord
 
 logger = logging.getLogger("ml_engine.inference.realtime_engine")
 
@@ -78,6 +79,7 @@ class RealtimeIngestionEngine:
         mitigator: Optional[MitigationController] = None,
         window_seconds: float = SLIDING_WINDOW_SECONDS,
         on_detection_callback: Optional[Callable[[MitigationAction, dict], None]] = None,
+        db_manager: Optional[DatabaseManager] = None,
     ):
         self.ws_url = ws_url
         self.window_seconds = window_seconds
@@ -87,6 +89,7 @@ class RealtimeIngestionEngine:
         self.detector = detector or ThreatDetector()
         self.mitigator = mitigator or MitigationController()
         self.extractor = StreamingExtractor(window_seconds=window_seconds)
+        self.db_mgr = db_manager or DatabaseManager()
 
         # Threading & Control
         self._running = False
@@ -115,7 +118,7 @@ class RealtimeIngestionEngine:
     # ─────────────────────────────────────────────────────────
 
     def start(self) -> None:
-        """Start the background streaming worker thread."""
+        """Start the background streaming worker thread and DB batch writer."""
         with self._lock:
             if self._running:
                 logger.warning("RealtimeIngestionEngine is already running")
@@ -123,6 +126,7 @@ class RealtimeIngestionEngine:
 
             self._running = True
             self._stats["start_time"] = datetime.now(timezone.utc).isoformat()
+            self.db_mgr.start()
             self._thread = threading.Thread(
                 target=self._run_loop,
                 daemon=True,
@@ -148,8 +152,9 @@ class RealtimeIngestionEngine:
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=3.0)
 
-        # Flush any remaining active windows
+        # Flush any remaining active windows & pending DB writes
         self.flush()
+        self.db_mgr.stop()
 
         logger.info("RealtimeIngestionEngine stopped")
 
@@ -271,6 +276,9 @@ class RealtimeIngestionEngine:
             self._event_timestamps = [t for t in self._event_timestamps if t > cutoff]
             self._stats["events_per_second"] = round(len(self._event_timestamps) / 10.0, 2)
 
+        # Enqueue raw telemetry event into async database batch queue
+        self.db_mgr.batch_writer.enqueue(event)
+
         # Feed event into StreamingExtractor
         completed_windows = self.extractor.ingest(event)
 
@@ -304,12 +312,49 @@ class RealtimeIngestionEngine:
         xgb_threat = threat_result.get("xgb_threat_name", "BENIGN")
         agreed_threat = threat_result.get("agreed_threat", "BENIGN")
 
-        # Update threat stats
+        # Persist 12-dim Feature Window into DuckDB
+        try:
+            vec_list = vector.tolist() if isinstance(vector, np.ndarray) else list(vector)
+            fw_rec = FeatureWindowRecord(
+                pid=pid,
+                window_start_ns=int(metadata.get("window_start_ns", 0)),
+                window_end_ns=int(metadata.get("window_end_ns", 0)),
+                event_count=int(metadata.get("event_count", 0)),
+                vector=vec_list,
+                rf_prediction=rf_threat,
+                xgb_prediction=xgb_threat,
+                iso_score=float(threat_result.get("iso_score", 0.0)),
+                agreed_threat=agreed_threat,
+                confidence=float(threat_result.get("confidence", 0.0)),
+            )
+            self.db_mgr.duckdb.insert_feature_window(fw_rec)
+        except Exception as err:
+            logger.debug("Failed to record feature window to DuckDB: %s", err)
+
+        # Update threat stats & record alert if threat detected
         if agreed_threat != "BENIGN":
             with self._lock:
                 self._stats["total_threats_detected"] += 1
                 cls_count = self._stats["threats_by_class"].get(agreed_threat, 0)
                 self._stats["threats_by_class"][agreed_threat] = cls_count + 1
+
+            try:
+                from ml_engine.storage import ThreatAlertRecord
+                alert_rec = ThreatAlertRecord(
+                    pid=pid,
+                    comm=str(metadata.get("comm", "")),
+                    exe_path=str(metadata.get("exe_path", "")),
+                    threat_name=agreed_threat,
+                    confidence=float(threat_result.get("confidence", 0.0)),
+                    consensus_agreed=bool(threat_result.get("consensus_agreed", False)),
+                    action_taken="EVALUATING",
+                    rf_threat=rf_threat,
+                    xgb_threat=xgb_threat,
+                    iso_anomaly=bool(threat_result.get("iso_anomaly", False)),
+                )
+                self.db_mgr.sqlite.insert_alert(alert_rec)
+            except Exception as err:
+                logger.debug("Failed to record threat alert to SQLite: %s", err)
 
         # 2. Evaluate mitigation decision
         action = self.mitigator.evaluate_and_mitigate(

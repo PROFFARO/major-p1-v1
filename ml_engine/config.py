@@ -7,14 +7,16 @@ here so that every module imports from a single source of truth.
 """
 
 import os
+import sys
 from pathlib import Path
-
-# ─────────────────────────────────────────────────────────────
-# Paths
-# ─────────────────────────────────────────────────────────────
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ML_ENGINE_DIR = Path(__file__).resolve().parent
+
+# Auto-inject virtualenv site-packages if running with system python
+venv_site = ML_ENGINE_DIR / ".venv" / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+if venv_site.exists() and str(venv_site) not in sys.path:
+    sys.path.insert(0, str(venv_site))
 
 # Automatically load environment variables from root .env file if present
 ENV_FILE = PROJECT_ROOT / ".env"
@@ -286,6 +288,11 @@ LLM_PROVIDER = os.getenv("LLM_PROVIDER", "auto").lower()
 # Maximum telemetry events injected into LLM context per query
 LLM_MAX_CONTEXT_EVENTS = 200
 
-# ML Engine Flask server
-ML_ENGINE_HOST = os.getenv("ML_ENGINE_HOST", "0.0.0.0")
-ML_ENGINE_PORT = int(os.getenv("ML_ENGINE_PORT", "8901"))
+# ML Engine REST API & Storage
+REST_API_HOST = os.getenv("REST_API_HOST", "0.0.0.0")
+REST_API_PORT = int(os.getenv("REST_API_PORT", "8901"))
+
+STORAGE_DIR = ML_ENGINE_DIR / "data"
+STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+DUCKDB_PATH = STORAGE_DIR / "telemetry.db"
+SQLITE_PATH = STORAGE_DIR / "sec_audit.db"
