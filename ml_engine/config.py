@@ -147,7 +147,6 @@ XGBOOST_PARAMS = {
     "subsample": 0.8,
     "colsample_bytree": 0.8,
     "eval_metric": "mlogloss",
-    "use_label_encoder": False,
     "random_state": 42,
     "n_jobs": -1,
 }
@@ -164,6 +163,10 @@ THREAT_LABELS = {
     4: "DATA_EXFILTRATION",
     5: "KERNEL_ROOTKIT",
     6: "CRYPTO_MINER",
+    7: "BRUTE_FORCE",
+    8: "CONTAINER_ESCAPE",
+    9: "LOG_TAMPERING",
+    10: "DENIAL_OF_SERVICE"
 }
 
 THREAT_LABELS_INV = {v: k for k, v in THREAT_LABELS.items()}
