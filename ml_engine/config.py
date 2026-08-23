@@ -15,6 +15,23 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ML_ENGINE_DIR = Path(__file__).resolve().parent
+
+# Automatically load environment variables from root .env file if present
+ENV_FILE = PROJECT_ROOT / ".env"
+if ENV_FILE.exists():
+    try:
+        with open(ENV_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip("'\"")
+                    if k and k not in os.environ:
+                        os.environ[k] = v
+    except Exception:
+        pass
+
 DATASET_DIR = PROJECT_ROOT / "agent" / "data"
 SAVED_MODELS_DIR = ML_ENGINE_DIR / "models" / "saved_models"
 
@@ -251,11 +268,20 @@ NETWORK_BLOCK_THREATS = frozenset([
 ])
 
 # ─────────────────────────────────────────────────────────────
-# LLM Security Analyst Configuration
+# Universal LLM Security Analyst Configuration
 # ─────────────────────────────────────────────────────────────
 
-LLM_API_KEY = os.getenv("GEMINI_API_KEY", "")
+LLM_API_KEY = (
+    os.getenv("LLM_API_KEY")
+    or os.getenv("GEMINI_API_KEY")
+    or os.getenv("OPENAI_API_KEY")
+    or os.getenv("GROQ_API_KEY")
+    or os.getenv("DEEPSEEK_API_KEY")
+    or ""
+)
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", os.getenv("OPENAI_BASE_URL", ""))
 LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "gemini-2.5-flash")
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "auto").lower()
 
 # Maximum telemetry events injected into LLM context per query
 LLM_MAX_CONTEXT_EVENTS = 200
