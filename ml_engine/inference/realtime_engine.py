@@ -318,9 +318,17 @@ class RealtimeIngestionEngine:
 
         threat_result = self.detector.predict_with_consensus(vector)
 
-        rf_threat = threat_result.get("rf_threat_name", "BENIGN")
-        xgb_threat = threat_result.get("xgb_threat_name", "BENIGN")
+        rf_res = threat_result.get("rf_result", {})
+        xgb_res = threat_result.get("xgb_result", {})
+
+        rf_threat = rf_res.get("threat_name", "BENIGN") if isinstance(rf_res, dict) else "BENIGN"
+        xgb_threat = xgb_res.get("threat_name", "BENIGN") if isinstance(xgb_res, dict) else "BENIGN"
         agreed_threat = threat_result.get("agreed_threat", "BENIGN")
+
+        # Set top-level keys in threat_result dict for downstream consumers
+        threat_result["threat_name"] = agreed_threat
+        threat_result["rf_threat_name"] = rf_threat
+        threat_result["xgb_threat_name"] = xgb_threat
 
         # Persist 12-dim Feature Window into DuckDB
         try:

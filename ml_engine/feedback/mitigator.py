@@ -238,7 +238,12 @@ class MitigationController:
             # Expire stale blocks before evaluation
             self._expire_stale_blocks()
 
-            rf_threat = threat_result.get("threat_name", "BENIGN")
+            rf_threat = (
+                threat_result.get("rf_threat_name")
+                or (threat_result.get("rf_result") or {}).get("threat_name")
+                or threat_result.get("threat_name")
+                or "BENIGN"
+            )
             confidence = threat_result.get("confidence", 0.0)
             comm = metadata.get("comm", "")
             dst_ip = metadata.get("dst_ip", "")
