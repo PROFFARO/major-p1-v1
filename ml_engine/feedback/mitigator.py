@@ -439,7 +439,7 @@ class MitigationController:
     def get_active_blocks(self) -> List[Dict[str, Any]]:
         with self._lock:
             self._expire_stale_blocks()
-            return [
+            blocks = [
                 {
                     "pid": b.pid,
                     "threat_name": b.threat_name,
@@ -455,6 +455,23 @@ class MitigationController:
                 }
                 for b in self._active_blocks.values()
             ]
+            if not blocks:
+                try:
+                    resp = requests.get(f"{self.agent_base_url}/blocklist", timeout=1.0)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        for pb in data.get("pid_blocks", []):
+                            blocks.append({
+                                "pid": pb.get("key"),
+                                "threat_name": pb.get("description", "LSM_BLOCK"),
+                                "confidence": 1.0,
+                                "blocked_at": pb.get("created_at"),
+                                "is_permanent": True,
+                                "expire_at": None,
+                            })
+                except Exception:
+                    pass
+            return blocks
 
     def get_stats(self) -> Dict[str, Any]:
         with self._lock:

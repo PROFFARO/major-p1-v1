@@ -224,8 +224,6 @@ resources/*
 ml_engine/data/*
 ml_engine/models/*
 
-agent/data/*
-
 agent/ebpf-ml-agent
 
 ml_engine/data_external/adfa_ld/

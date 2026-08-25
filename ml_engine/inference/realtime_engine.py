@@ -150,7 +150,10 @@ class RealtimeIngestionEngine:
                 pass
 
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=3.0)
+            try:
+                self._thread.join(timeout=0.2)
+            except Exception:
+                pass
 
         # Flush any remaining active windows & pending DB writes
         self.flush()
@@ -205,7 +208,9 @@ class RealtimeIngestionEngine:
                     "WebSocket disconnected — reconnecting in %.1fs (attempt #%d)...",
                     backoff_seconds, self._stats["reconnect_count"],
                 )
-                time.sleep(backoff_seconds)
+                sleep_start = time.time()
+                while self._running and (time.time() - sleep_start < backoff_seconds):
+                    time.sleep(0.05)
                 backoff_seconds = min(max_backoff, backoff_seconds * 2.0)
 
     # ─────────────────────────────────────────────────────────

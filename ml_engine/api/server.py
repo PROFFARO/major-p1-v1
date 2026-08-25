@@ -96,5 +96,8 @@ class APIServerRunner:
         if self._server:
             self._server.should_exit = True
             if self._thread and self._thread.is_alive():
-                self._thread.join(timeout=2.0)
+                try:
+                    self._thread.join(timeout=0.2)
+                except Exception:
+                    pass
             logger.info("FastAPI REST Server stopped")

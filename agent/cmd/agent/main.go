@@ -26,6 +26,7 @@ func main() {
 	bpfDir := flag.String("bpf-dir", "../../bpf/probes", "Path to directory containing compiled .bpf.o files")
 	listenAddr := flag.String("listen", ":8900", "HTTP + WebSocket listen address")
 	datasetDir := flag.String("dataset-dir", "./data", "Directory to save .jsonl telemetry dataset files")
+	exportDataset := flag.Bool("export-dataset", false, "Enable continuous logging of raw telemetry to .jsonl dataset files")
 	eventBufSize := flag.Int("event-buf", 8192, "Internal event channel buffer depth")
 	flag.Parse()
 
@@ -42,7 +43,7 @@ func main() {
 	}
 
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.LUTC)
-	log.Printf("[agent] Starting eBPF Security Agent (bpf-dir=%s, listen=%s, dataset-dir=%s)", resolvedBpfDir, *listenAddr, *datasetDir)
+	log.Printf("[agent] Starting eBPF Security Agent (bpf-dir=%s, listen=%s, export-dataset=%v)", resolvedBpfDir, *listenAddr, *exportDataset)
 
 	// 1. Load and attach eBPF probes
 	log.Printf("[agent] Loading eBPF bytecode objects from %s", resolvedBpfDir)
@@ -62,9 +63,13 @@ func main() {
 
 	// 3. Initialize Process Context Resolver & Telemetry Dataset Exporter
 	procResolver := procctx.NewProcessResolver()
-	exporter, err := logger.NewExporter(*datasetDir, *eventBufSize)
-	if err != nil {
-		log.Printf("[agent] Telemetry dataset exporter initialization warning: %v", err)
+	var exporter *logger.Exporter
+	if *exportDataset {
+		var err error
+		exporter, err = logger.NewExporter(*datasetDir, *eventBufSize)
+		if err != nil {
+			log.Printf("[agent] Telemetry dataset exporter initialization warning: %v", err)
+		}
 	}
 
 	// 4. Initialize Metrics Collector & Blocklist Manager

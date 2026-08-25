@@ -60,7 +60,14 @@ class DuckDBManager:
     def _init_db(self):
         """Initialize database connection and schema tables."""
         with self._lock:
-            self.conn = duckdb.connect(str(self.db_path))
+            try:
+                self.conn = duckdb.connect(str(self.db_path))
+            except Exception:
+                try:
+                    self.conn = duckdb.connect(str(self.db_path), read_only=True)
+                except Exception:
+                    logger.warning("DuckDB file locked — fallback to in-memory mode")
+                    self.conn = duckdb.connect(":memory:")
 
             # Auto-upgrade table if old INT32 schema exists
             try:
