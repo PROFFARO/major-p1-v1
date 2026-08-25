@@ -91,13 +91,26 @@ def make_controller() -> MitigationController:
 # Test Cases
 # ─────────────────────────────────────────────────────────────
 
+import shutil
+from ml_engine.storage.db_manager import DatabaseManager
+
 class TestIngestionPipeline(unittest.TestCase):
     """Test telemetry ingestion, feature window extraction, and inference pipeline."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp(prefix="ebpf_test_rt_")
+        self.duckdb_path = Path(self.temp_dir) / "test_telemetry.db"
+        self.sqlite_path = Path(self.temp_dir) / "test_sec_audit.db"
+        self.db_mgr = DatabaseManager(duckdb_path=self.duckdb_path, sqlite_path=self.sqlite_path)
+
+    def tearDown(self):
+        self.db_mgr.stop()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_single_event_ingest_updates_stats(self):
         detector = create_mock_detector()
         mitigator = make_controller()
-        engine = RealtimeIngestionEngine(detector=detector, mitigator=mitigator, window_seconds=5.0)
+        engine = RealtimeIngestionEngine(detector=detector, mitigator=mitigator, db_manager=self.db_mgr, window_seconds=5.0)
 
         event = create_mock_event(pid=9999)
         actions = engine.ingest_event(event)
@@ -111,7 +124,7 @@ class TestIngestionPipeline(unittest.TestCase):
     def test_window_completion_triggers_detection_and_mitigation(self):
         detector = create_mock_detector(rf_threat="RANSOMWARE", xgb_threat="RANSOMWARE", confidence=0.95)
         mitigator = make_controller()
-        engine = RealtimeIngestionEngine(detector=detector, mitigator=mitigator, window_seconds=5.0)
+        engine = RealtimeIngestionEngine(detector=detector, mitigator=mitigator, db_manager=self.db_mgr, window_seconds=5.0)
 
         actions = []
         start_ns = int(time.time() * 1e9)
@@ -142,6 +155,7 @@ class TestIngestionPipeline(unittest.TestCase):
         engine = RealtimeIngestionEngine(
             detector=detector,
             mitigator=mitigator,
+            db_manager=self.db_mgr,
             on_detection_callback=subscriber_cb,
             window_seconds=5.0,
         )
@@ -163,10 +177,20 @@ class TestIngestionPipeline(unittest.TestCase):
 class TestWebSocketMessageHandler(unittest.TestCase):
     """Test handling of raw JSON messages from WebSocket."""
 
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp(prefix="ebpf_test_ws_")
+        self.duckdb_path = Path(self.temp_dir) / "test_telemetry.db"
+        self.sqlite_path = Path(self.temp_dir) / "test_sec_audit.db"
+        self.db_mgr = DatabaseManager(duckdb_path=self.duckdb_path, sqlite_path=self.sqlite_path)
+
+    def tearDown(self):
+        self.db_mgr.stop()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
     def test_valid_json_message_ingested(self):
         detector = create_mock_detector()
         mitigator = make_controller()
-        engine = RealtimeIngestionEngine(detector=detector, mitigator=mitigator)
+        engine = RealtimeIngestionEngine(detector=detector, mitigator=mitigator, db_manager=self.db_mgr)
 
         event = create_mock_event(pid=5000)
         json_msg = json.dumps(event)
@@ -178,7 +202,7 @@ class TestWebSocketMessageHandler(unittest.TestCase):
     def test_invalid_json_message_ignored(self):
         detector = create_mock_detector()
         mitigator = make_controller()
-        engine = RealtimeIngestionEngine(detector=detector, mitigator=mitigator)
+        engine = RealtimeIngestionEngine(detector=detector, mitigator=mitigator, db_manager=self.db_mgr)
 
         # Should not raise exception
         engine._on_message(None, "{invalid json content...")
@@ -189,11 +213,21 @@ class TestWebSocketMessageHandler(unittest.TestCase):
 class TestEngineLifecycle(unittest.TestCase):
     """Test engine background thread lifecycle methods."""
 
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp(prefix="ebpf_test_lc_")
+        self.duckdb_path = Path(self.temp_dir) / "test_telemetry.db"
+        self.sqlite_path = Path(self.temp_dir) / "test_sec_audit.db"
+        self.db_mgr = DatabaseManager(duckdb_path=self.duckdb_path, sqlite_path=self.sqlite_path)
+
+    def tearDown(self):
+        self.db_mgr.stop()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
     @patch("ml_engine.inference.realtime_engine.websocket.WebSocketApp")
     def test_start_stop_lifecycle(self, mock_ws_app):
         detector = create_mock_detector()
         mitigator = make_controller()
-        engine = RealtimeIngestionEngine(detector=detector, mitigator=mitigator)
+        engine = RealtimeIngestionEngine(detector=detector, mitigator=mitigator, db_manager=self.db_mgr)
 
         self.assertFalse(engine.is_running())
         engine.start()

@@ -147,19 +147,28 @@ class AuditLogger:
             try:
                 from ml_engine.storage import SQLiteWALManager, MitigationAuditRecord
                 sqlite_mgr = SQLiteWALManager()
+                if isinstance(action.timestamp, (int, float)):
+                    ts_str = datetime.fromtimestamp(action.timestamp, tz=timezone.utc).isoformat()
+                else:
+                    ts_str = str(action.timestamp)
+
+                is_success = bool(action.agent_response or action.action_taken.startswith("SKIP") or action.action_taken == "LOG_ONLY")
+                is_dry_run = bool(action.action_taken == "LOG_ONLY" or action.action_taken.startswith("SKIP"))
+
                 rec = MitigationAuditRecord(
-                    timestamp=action.timestamp,
+                    timestamp=ts_str,
                     pid=action.pid,
+                    comm=action.comm,
                     threat_name=action.threat_name,
                     action_taken=action.action_taken,
                     confidence=action.confidence,
-                    success=action.success,
-                    dry_run=action.dry_run,
+                    success=is_success,
+                    dry_run=is_dry_run,
                     details=action.reason,
                 )
                 sqlite_mgr.insert_mitigation_audit(rec)
             except Exception as sql_err:
-                logger.debug("Failed to record audit action to SQLite: %s", sql_err)
+                logger.warning("Failed to record audit action to SQLite: %s", sql_err)
 
         except Exception as e:
             logger.error("Failed to write audit log: %s", e)

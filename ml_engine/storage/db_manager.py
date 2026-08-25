@@ -25,7 +25,7 @@ import numpy as np
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from ml_engine.config import ML_ENGINE_DIR
+from ml_engine.config import DUCKDB_PATH, SQLITE_PATH, LOGS_DIR
 from ml_engine.storage.models import (
     TelemetryEventRecord,
     FeatureWindowRecord,
@@ -37,11 +37,8 @@ from ml_engine.storage.models import (
 
 logger = logging.getLogger("ml_engine.storage.db_manager")
 
-DATA_DIR = ML_ENGINE_DIR / "data"
+DATA_DIR = LOGS_DIR
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-DUCKDB_PATH = DATA_DIR / "telemetry.db"
-SQLITE_PATH = DATA_DIR / "sec_audit.db"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -257,6 +254,7 @@ class SQLiteWALManager:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     timestamp TEXT NOT NULL,
                     pid INTEGER NOT NULL,
+                    comm TEXT NOT NULL DEFAULT '',
                     threat_name TEXT NOT NULL,
                     action_taken TEXT NOT NULL,
                     confidence REAL NOT NULL,
@@ -265,6 +263,11 @@ class SQLiteWALManager:
                     details TEXT
                 );
             """)
+            # Migration check: ensure comm column exists if table was created previously
+            cursor.execute("PRAGMA table_info(mitigation_audit)")
+            cols = [info[1] for info in cursor.fetchall()]
+            if "comm" not in cols:
+                cursor.execute("ALTER TABLE mitigation_audit ADD COLUMN comm TEXT NOT NULL DEFAULT ''")
 
             # 3. Active Blocklist table
             cursor.execute("""
@@ -293,7 +296,7 @@ class SQLiteWALManager:
 
             conn.commit()
             conn.close()
-            logger.info("SQLite WAL Transactional Store initialized at %s", self.db_path)
+            logger.debug("SQLite WAL Transactional Store initialized at %s", self.db_path)
 
     def insert_alert(self, alert: ThreatAlertRecord) -> int:
         """Insert a threat alert record and return generated ID."""
@@ -323,10 +326,10 @@ class SQLiteWALManager:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT INTO mitigation_audit (
-                    timestamp, pid, threat_name, action_taken, confidence, success, dry_run, details
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    timestamp, pid, comm, threat_name, action_taken, confidence, success, dry_run, details
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                audit.timestamp, audit.pid, audit.threat_name, audit.action_taken,
+                audit.timestamp, audit.pid, getattr(audit, 'comm', ''), audit.threat_name, audit.action_taken,
                 audit.confidence, int(audit.success), int(audit.dry_run), audit.details
             ))
             audit_id = cursor.lastrowid

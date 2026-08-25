@@ -187,8 +187,8 @@ class RealtimeIngestionEngine:
                     on_close=self._on_close,
                 )
 
-                # Blocks until connection closes
-                self._ws_app.run_forever(ping_interval=10, ping_timeout=5)
+                # Blocks until connection closes (generous ping interval/timeout to prevent false drops under high EPS)
+                self._ws_app.run_forever(ping_interval=30, ping_timeout=20)
 
                 # Reset backoff on clean loop iteration
                 if not self._running:
@@ -337,6 +337,17 @@ class RealtimeIngestionEngine:
             logger.debug("Failed to record feature window to DuckDB: %s", err)
 
         # Update threat stats & record alert if threat detected
+        # 2. Evaluate mitigation decision
+        action = self.mitigator.evaluate_and_mitigate(
+            pid=pid,
+            threat_result=threat_result,
+            metadata=metadata,
+            xgb_threat_name=xgb_threat,
+        )
+
+        action_taken_str = action.action_taken if action else "LOG_ONLY"
+
+        # Update threat stats & record alert if threat detected
         if agreed_threat != "BENIGN":
             with self._lock:
                 self._stats["total_threats_detected"] += 1
@@ -352,7 +363,7 @@ class RealtimeIngestionEngine:
                     threat_name=agreed_threat,
                     confidence=float(threat_result.get("confidence", 0.0)),
                     consensus_agreed=bool(threat_result.get("consensus_agreed", False)),
-                    action_taken="EVALUATING",
+                    action_taken=action_taken_str,
                     rf_threat=rf_threat,
                     xgb_threat=xgb_threat,
                     iso_anomaly=bool(threat_result.get("iso_anomaly", False)),
@@ -360,14 +371,6 @@ class RealtimeIngestionEngine:
                 self.db_mgr.sqlite.insert_alert(alert_rec)
             except Exception as err:
                 logger.debug("Failed to record threat alert to SQLite: %s", err)
-
-        # 2. Evaluate mitigation decision
-        action = self.mitigator.evaluate_and_mitigate(
-            pid=pid,
-            threat_result=threat_result,
-            metadata=metadata,
-            xgb_threat_name=xgb_threat,
-        )
 
         # 3. Notify external subscriber callback (if registered)
         if self.on_detection_callback and action:

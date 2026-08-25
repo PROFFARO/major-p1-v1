@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	procctx "github.com/proffaro/ebpf-ml-agent/context"
 	agentebpf "github.com/proffaro/ebpf-ml-agent/ebpf"
@@ -131,5 +132,6 @@ func main() {
 	sig := <-sigCh
 	log.Printf("[agent] Received signal %v, shutting down", sig)
 	cancel()
+	time.Sleep(150 * time.Millisecond)
 	log.Println("[agent] Agent shutdown complete")
 }

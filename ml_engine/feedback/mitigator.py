@@ -415,20 +415,20 @@ class MitigationController:
             return "DRY-RUN"
         return self._send_block_ip(ip, description)
 
-    def unblock_pid(self, pid: int) -> Optional[str]:
+    def unblock_pid(self, pid: int, reason: str = "") -> Optional[str]:
         with self._lock:
             if pid in self._active_blocks:
                 del self._active_blocks[pid]
             self._stats["total_unblocked"] += 1
 
         if self.dry_run:
-            logger.info("[DRY-RUN] Would unblock PID %d", pid)
+            logger.info("[DRY-RUN] Would unblock PID %d: %s", pid, reason)
             return "DRY-RUN"
         return self._send_unblock_pid(pid)
 
-    def unblock_ip(self, ip: str) -> Optional[str]:
+    def unblock_ip(self, ip: str, reason: str = "") -> Optional[str]:
         if self.dry_run:
-            logger.info("[DRY-RUN] Would unblock IP %s", ip)
+            logger.info("[DRY-RUN] Would unblock IP %s: %s", ip, reason)
             return "DRY-RUN"
         return self._send_unblock_ip(ip)
 

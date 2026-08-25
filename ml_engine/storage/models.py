@@ -68,8 +68,9 @@ class MitigationAuditRecord(BaseModel):
     id: Optional[int] = None
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     pid: int
+    comm: str = ""
     threat_name: str
-    action_taken: str  # KILL_PROCESS, PAUSE_PROCESS, BLOCK_IP, LOG_ONLY
+    action_taken: str  # BLOCK_PID, SKIP_BENIGN, SKIP_PROTECTED, LOG_ONLY
     confidence: float
     success: bool
     dry_run: bool

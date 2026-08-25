@@ -26,18 +26,14 @@ import json
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 
+# Silence third-party logger outputs before module imports
+logging.getLogger("numexpr").setLevel(logging.WARNING)
+logging.getLogger("numexpr.utils").setLevel(logging.WARNING)
+
 # Ensure project root is in sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-
-# Configure Central Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logger = logging.getLogger("system.orchestrator")
 
 # Import ML Engine Components
 from ml_engine.config import (
@@ -49,14 +45,17 @@ from ml_engine.config import (
     LLM_BASE_URL,
     LLM_MODEL_NAME,
     LLM_PROVIDER,
+    LOGS_DIR,
 )
 from ml_engine.models.detector import ThreatDetector
 from ml_engine.feedback.mitigator import MitigationController
 from ml_engine.feedback.actions import AuditLogger
 from ml_engine.inference.realtime_engine import RealtimeIngestionEngine
 from ml_engine.llm_analyst.copilot import LLMSecurityCopilot
-from ml_engine.storage import DatabaseManager
+from ml_engine.storage import DatabaseManager, ThreatAlertRecord
 from ml_engine.api import APIServerRunner
+
+logger = logging.getLogger("system.orchestrator")
 
 
 class UnifiedSystemOrchestrator:
@@ -92,6 +91,13 @@ class UnifiedSystemOrchestrator:
         self.latest_reports: List[Dict[str, Any]] = []
 
         logger.info("Initializing Unified eBPF-ML Security System...")
+
+        # Ensure log directory and files are accessible
+        for log_file in LOGS_DIR.glob("*"):
+            try:
+                log_file.chmod(0o666)
+            except Exception:
+                pass
 
         # 1. Audit Logger & Database Manager
         self.audit_logger = AuditLogger()
@@ -147,6 +153,10 @@ class UnifiedSystemOrchestrator:
         threat_name = action.threat_name
         action_taken = action.action_taken
 
+        # Only trigger SOC Incident Synthesis for real threats, not benign system activity
+        if threat_name == "BENIGN":
+            return
+
         logger.critical(
             "🚨 LIVE THREAT DETECTED — PID: %d | Threat: %s | Action: %s | Conf: %.2f%%",
             pid,
@@ -162,6 +172,25 @@ class UnifiedSystemOrchestrator:
             "parent_comm": threat_res.get("parent_comm", "bash"),
             "dst_ip": threat_res.get("dst_ip", "0.0.0.0"),
         }
+
+        # Persist alert record to SQLite threat_alerts table
+        try:
+            alert_rec = ThreatAlertRecord(
+                pid=pid,
+                comm=metadata["comm"],
+                exe_path=metadata["exe_path"],
+                threat_name=threat_name,
+                confidence=action.confidence,
+                consensus_agreed=threat_res.get("consensus", True),
+                action_taken=action_taken,
+                rf_threat=action.rf_threat_name,
+                xgb_threat=action.xgb_threat_name,
+                iso_anomaly=action.is_anomaly,
+                feature_summary=threat_res.get("feature_summary"),
+            )
+            self.db_mgr.sqlite.insert_alert(alert_rec)
+        except Exception as alert_err:
+            logger.warning("Failed to store threat alert to SQLite: %s", alert_err)
 
         report = self.copilot.analyze_threat(action.to_dict(), metadata)
         remediation = self.copilot.generate_remediation(action.to_dict(), metadata)
@@ -210,8 +239,10 @@ class UnifiedSystemOrchestrator:
         # Privilege Check
         is_root = (os.geteuid() == 0)
         if not is_root:
-            logger.warning("⚠️  Current process is NOT root. eBPF probe loading requires CAP_BPF / CAP_SYS_ADMIN privileges.")
-            logger.warning("To allow full LSM kernel enforcement, restart with: sudo python3 main.py")
+            logger.error("❌ Root privileges required to load eBPF kernel probes!")
+            logger.error("Please re-run the command with sudo:")
+            logger.error("    sudo python3 main.py\n")
+            sys.exit(1)
 
         cmd = [
             str(agent_bin),
@@ -221,9 +252,6 @@ class UnifiedSystemOrchestrator:
             cmd.extend(["--bpf-dir", self.bpf_dir])
         if self.export_dataset:
             cmd.append("--export-dataset")
-
-        if not is_root and os.path.exists("/usr/bin/sudo"):
-            cmd = ["sudo"] + cmd
 
         logger.info("Spawning Go eBPF Agent background process: %s", " ".join(cmd))
         try:
@@ -266,7 +294,7 @@ class UnifiedSystemOrchestrator:
         for line in iter(self.agent_process.stdout.readline, ""):
             line_str = line.strip()
             if line_str:
-                logger.debug("[agent-process] %s", line_str)
+                logger.info("[Go-Agent] %s", line_str)
 
     def start(self):
         """Start all system subsystems in parallel."""
@@ -359,11 +387,28 @@ class UnifiedSystemOrchestrator:
 
                 elif cmd.lower() == "blocks":
                     blocks = self.mitigator.get_active_blocks()
-                    print(f"\n🔒 Active Kernel LSM Blocklist ({len(blocks)} entries):")
-                    if not blocks:
+                    db_blocks = self.db_mgr.sqlite.get_active_blocks()
+                    
+                    # Try querying live eBPF BPF LSM Kernel Map via Go Agent REST API
+                    agent_blocks = []
+                    if self.agent_process:
+                        try:
+                            req = urllib.request.Request(f"http://localhost:{self.listen_agent.split(':')[-1]}/api/blocklist")
+                            with urllib.request.urlopen(req, timeout=2) as resp:
+                                agent_blocks = json.loads(resp.read().decode('utf-8'))
+                        except Exception:
+                            pass
+
+                    total_entries = max(len(blocks), len(db_blocks), len(agent_blocks))
+                    print(f"\n🔒 Active eBPF Kernel LSM Blocklist Map ({total_entries} active blocks):")
+                    if not blocks and not db_blocks and not agent_blocks:
                         print("   (No PIDs currently blocked in kernel LSM map)\n")
-                    for b in blocks:
-                        print(f"   • PID {b.get('pid')} | Threat: {b.get('threat_name', 'MALWARE')} | Permanent: {b.get('is_permanent', True)} | Blocked At: {b.get('blocked_at', 'N/A')}")
+                    else:
+                        combined = {}
+                        for b in db_blocks + blocks:
+                            combined[b.get('pid')] = b
+                        for pid, b in combined.items():
+                            print(f"   • PID {pid} | Threat: {b.get('threat_name', 'MALWARE')} | Permanent: {b.get('is_permanent', True)} | Blocked At: {b.get('blocked_at', 'N/A')}")
                     print()
 
                 elif cmd.lower().startswith("unblock"):
@@ -376,7 +421,7 @@ class UnifiedSystemOrchestrator:
                     if success:
                         print(f"✓ PID {target_pid} removed from kernel blocklist.\n")
                     else:
-                        print(f"❌ Failed to unblock PID {target_pid} (not found in blocklist).\n")
+                        print(f"❌ Failed to unblock PID {target_pid} (not found in active blocklist).\n")
 
                 elif cmd.lower().startswith("alerts"):
                     parts = cmd.split()
@@ -386,7 +431,8 @@ class UnifiedSystemOrchestrator:
                     if not alerts:
                         print("   (No threat alerts recorded in database)\n")
                     for a in alerts:
-                        print(f"   • [{a.get('timestamp')}] PID {a.get('pid')} ({a.get('comm')}) — {a.get('threat_name')} -> Action: {a.get('action_taken')}")
+                        conf = a.get('confidence', 0.0) * 100.0
+                        print(f"   • [{a.get('timestamp')}] PID {a.get('pid')} ({a.get('comm')}) — Threat: {a.get('threat_name')} (Conf: {conf:.1f}%) -> Action: {a.get('action_taken')}")
                     print()
 
                 elif cmd.lower().startswith("audit"):
@@ -397,7 +443,11 @@ class UnifiedSystemOrchestrator:
                     if not logs:
                         print("   (No audit records present)\n")
                     for l in logs:
-                        print(f"   • [{l.get('timestamp')}] PID {l.get('pid')} ({l.get('comm')}) -> {l.get('action_taken')} (Reason: {l.get('reason')})")
+                        comm = l.get('comm') or 'N/A'
+                        reason = l.get('details') or l.get('reason') or 'No details provided'
+                        threat = l.get('threat_name') or 'BENIGN'
+                        conf = l.get('confidence', 0.0)
+                        print(f"   • [{l.get('timestamp')}] PID {l.get('pid')} ({comm}) -> {l.get('action_taken')} | Threat: {threat} (conf={conf:.2f}) | Reason: {reason}")
                     print()
 
                 elif cmd.lower().startswith("query"):
@@ -450,6 +500,8 @@ class UnifiedSystemOrchestrator:
 
             except (KeyboardInterrupt, EOFError):
                 break
+            except Exception as err:
+                print(f"❌ Command execution error: {err}\n")
 
 
 def main():
@@ -467,6 +519,13 @@ def main():
     parser.add_argument("--non-interactive", action="store_true", help="Run in headless daemon mode without interactive CLI console")
 
     args = parser.parse_args()
+
+    # Configure Central Logging after CLI args parse
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
     orchestrator = UnifiedSystemOrchestrator(
         dry_run=args.dry_run,

@@ -34,10 +34,13 @@ if ENV_FILE.exists():
     except Exception:
         pass
 
-DATASET_DIR = PROJECT_ROOT / "agent" / "data"
-SAVED_MODELS_DIR = ML_ENGINE_DIR / "models" / "saved_models"
+LOGS_DIR = PROJECT_ROOT / "logs"
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Ensure directories exist
+DATASET_DIR = LOGS_DIR / "telemetry_raw"
+DATASET_DIR.mkdir(parents=True, exist_ok=True)
+
+SAVED_MODELS_DIR = ML_ENGINE_DIR / "models" / "saved_models"
 SAVED_MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ─────────────────────────────────────────────────────────────
@@ -253,7 +256,7 @@ PROTECTED_PROCESS_NAMES = frozenset([
 ])
 
 # Audit log file path
-AUDIT_LOG_PATH = ML_ENGINE_DIR / "feedback" / "audit_log.jsonl"
+AUDIT_LOG_PATH = LOGS_DIR / "audit_log.jsonl"
 
 # Rate limiter: max block API requests per second to Go Agent
 RATE_LIMIT_REQUESTS_PER_SECOND = 10
@@ -292,7 +295,7 @@ LLM_MAX_CONTEXT_EVENTS = 200
 REST_API_HOST = os.getenv("REST_API_HOST", "0.0.0.0")
 REST_API_PORT = int(os.getenv("REST_API_PORT", "8901"))
 
-STORAGE_DIR = ML_ENGINE_DIR / "data"
+STORAGE_DIR = LOGS_DIR
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-DUCKDB_PATH = STORAGE_DIR / "telemetry.db"
-SQLITE_PATH = STORAGE_DIR / "sec_audit.db"
+DUCKDB_PATH = LOGS_DIR / "telemetry.db"
+SQLITE_PATH = LOGS_DIR / "sec_audit.db"

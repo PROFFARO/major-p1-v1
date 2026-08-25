@@ -15,12 +15,18 @@ from ml_engine.storage import DatabaseManager, ThreatAlertRecord, ActiveBlockRec
 from ml_engine.llm_analyst.copilot import LLMSecurityCopilot
 
 
+import tempfile
+import shutil
+
 class TestFastAPIRoutes(unittest.TestCase):
     """Unit tests for FastAPI REST endpoints using TestClient."""
 
     @classmethod
     def setUpClass(cls):
-        cls.db_mgr = DatabaseManager()
+        cls.temp_dir = tempfile.mkdtemp(prefix="ebpf_test_api_")
+        cls.duckdb_path = Path(cls.temp_dir) / "test_telemetry.db"
+        cls.sqlite_path = Path(cls.temp_dir) / "test_sec_audit.db"
+        cls.db_mgr = DatabaseManager(duckdb_path=cls.duckdb_path, sqlite_path=cls.sqlite_path)
         cls.copilot = LLMSecurityCopilot()
         set_api_dependencies(db_mgr=cls.db_mgr, copilot=cls.copilot)
         cls.client = TestClient(app)
@@ -28,6 +34,7 @@ class TestFastAPIRoutes(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.db_mgr.stop()
+        shutil.rmtree(cls.temp_dir, ignore_errors=True)
 
     def test_health_endpoint(self):
         """Test GET /api/v1/health."""

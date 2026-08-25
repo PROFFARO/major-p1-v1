@@ -21,11 +21,13 @@ from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import shutil
 from ml_engine.models.detector import ThreatDetector
 from ml_engine.feedback.mitigator import MitigationController
 from ml_engine.feedback.actions import AuditLogger
 from ml_engine.inference.realtime_engine import RealtimeIngestionEngine
 from ml_engine.llm_analyst.copilot import LLMSecurityCopilot
+from ml_engine.storage import DatabaseManager
 
 
 # ─────────────────────────────────────────────────────────────
@@ -84,7 +86,12 @@ class TestFullPipelineE2E(unittest.TestCase):
     """Full-stack integration test suite covering end-to-end telemetry to mitigation & LLM report."""
 
     def setUp(self):
-        # 1. Temporary Audit Log
+        # 1. Temporary Audit Log & Isolated DatabaseManager
+        self.temp_dir = tempfile.mkdtemp(prefix="ebpf_test_e2e_")
+        self.duckdb_path = Path(self.temp_dir) / "test_telemetry.db"
+        self.sqlite_path = Path(self.temp_dir) / "test_sec_audit.db"
+        self.db_mgr = DatabaseManager(duckdb_path=self.duckdb_path, sqlite_path=self.sqlite_path)
+
         self.tmp_audit = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False)
         self.tmp_audit.close()
         self.audit_logger = AuditLogger(log_path=Path(self.tmp_audit.name))
@@ -124,6 +131,7 @@ class TestFullPipelineE2E(unittest.TestCase):
         self.engine = RealtimeIngestionEngine(
             detector=self.detector,
             mitigator=self.mitigator,
+            db_manager=self.db_mgr,
             on_detection_callback=on_detection,
             window_seconds=5.0,
         )
@@ -200,6 +208,8 @@ class TestFullPipelineE2E(unittest.TestCase):
         self.assertEqual(actions[0].action_taken, "SKIP_PROTECTED")
 
     def tearDown(self):
+        self.db_mgr.stop()
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
         if Path(self.tmp_audit.name).exists():
             try:
                 Path(self.tmp_audit.name).unlink()
