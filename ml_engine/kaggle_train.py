@@ -249,7 +249,7 @@ def generate_attack_dataset(benign_df: pd.DataFrame, num_samples_per_class: int 
 
     # 1. Ransomware
     rw = np.column_stack([
-        np.random.uniform(5000, 100000, num_samples_per_class),
+        np.random.uniform(15, 100000, num_samples_per_class),
         np.random.uniform(1.2, 2.8, num_samples_per_class),
         np.random.uniform(0.75, 1.0, num_samples_per_class),
         np.random.choice([0, 1, 2], num_samples_per_class),
@@ -257,7 +257,7 @@ def generate_attack_dataset(benign_df: pd.DataFrame, num_samples_per_class: int 
         np.zeros(num_samples_per_class),
         np.random.uniform(0, 50, num_samples_per_class),
         np.zeros(num_samples_per_class),
-        np.zeros(num_samples_per_class),
+        np.random.choice([0.0, 1.0], num_samples_per_class),
         np.random.uniform(1, 6, num_samples_per_class),
         np.random.uniform(0.0, 0.05, num_samples_per_class),
         np.random.uniform(4, 12, num_samples_per_class),
@@ -285,13 +285,13 @@ def generate_attack_dataset(benign_df: pd.DataFrame, num_samples_per_class: int 
 
     # 3. Reverse Shell
     rs = np.column_stack([
-        np.random.uniform(20, 1000, num_samples_per_class),
-        np.random.uniform(0.1, 0.9, num_samples_per_class),
+        np.random.uniform(5, 1000, num_samples_per_class),
+        np.random.uniform(0.0, 2.5, num_samples_per_class),
         np.random.uniform(0.0, 0.1, num_samples_per_class),
         np.random.choice([0, 1, 2], num_samples_per_class),
         np.zeros(num_samples_per_class),
         np.zeros(num_samples_per_class),
-        np.random.uniform(50, 500, num_samples_per_class),
+        np.random.uniform(5, 500, num_samples_per_class),
         np.random.uniform(0, 5, num_samples_per_class),
         np.ones(num_samples_per_class),
         np.random.uniform(1, 4, num_samples_per_class),
@@ -396,7 +396,7 @@ def generate_attack_dataset(benign_df: pd.DataFrame, num_samples_per_class: int 
         np.random.uniform(100, 5000, num_samples_per_class),
         np.random.uniform(0.5, 1.8, num_samples_per_class),
         np.random.uniform(0.85, 1.0, num_samples_per_class),
-        np.random.uniform(4, 20, num_samples_per_class),
+        np.random.uniform(4, 100, num_samples_per_class),
         np.random.choice([0, 1, 2], num_samples_per_class),
         np.zeros(num_samples_per_class),
         np.zeros(num_samples_per_class),

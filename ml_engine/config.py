@@ -64,7 +64,7 @@ AGENT_API_BLOCK_IP = f"{AGENT_REST_BASE}/api/block/ip"
 SLIDING_WINDOW_SECONDS = 5.0
 
 # Minimum events in a window to produce a valid feature vector
-MIN_EVENTS_PER_WINDOW = 10
+MIN_EVENTS_PER_WINDOW = 3
 
 # Sensitive file paths that trigger elevated threat scoring
 SENSITIVE_PATHS = frozenset([
@@ -201,13 +201,13 @@ THREAT_LABELS_INV = {v: k for k, v in THREAT_LABELS.items()}
 ANOMALY_SCORE_THRESHOLD = -0.3
 
 # Minimum classifier confidence for automatic mitigation
-AUTO_MITIGATE_CONFIDENCE = 0.85
+AUTO_MITIGATE_CONFIDENCE = 0.80
 
 # Cooldown period (seconds) before re-blocking same PID
 MITIGATION_COOLDOWN_SECONDS = 30.0
 
-# Require both Random Forest AND XGBoost to agree on threat class
-DUAL_MODEL_CONSENSUS = True
+# Dual-model consensus (Deprecated: set to False for High-Confidence Ensemble Scoring)
+DUAL_MODEL_CONSENSUS = False
 
 # Dry-run mode: log mitigation decisions without actually blocking
 DRY_RUN_DEFAULT = True

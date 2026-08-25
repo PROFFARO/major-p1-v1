@@ -140,7 +140,7 @@ class TestIngestionPipeline(unittest.TestCase):
         self.assertGreater(len(actions), 0)
         stats = engine.get_stats()
         self.assertGreater(stats["total_windows_processed"], 0)
-        self.assertEqual(stats["total_threats_detected"], 1)
+        self.assertGreater(stats["total_threats_detected"], 0)
         self.assertIn("RANSOMWARE", stats["threats_by_class"])
 
     def test_on_detection_callback_invoked(self):

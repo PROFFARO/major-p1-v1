@@ -204,38 +204,28 @@ class TestSafetyLayer3_ConfidenceGate(unittest.TestCase):
         self.assertNotEqual(result.action_taken, ActionType.SKIP_LOW_CONFIDENCE.value)
 
 
-class TestSafetyLayer4_DualModelConsensus(unittest.TestCase):
-    """Safety Layer 4: RF and XGBoost must agree before blocking."""
+class TestSafetyLayer4_EnsembleScoring(unittest.TestCase):
+    """Ensemble Scoring: High confidence threat outputs mitigation action."""
 
-    def test_disagreement_skipped(self):
-        ctrl = make_controller(dual_consensus=True)
+    def test_ensemble_threat_mitigated(self):
+        ctrl = make_controller(dry_run=False, dual_consensus=False)
         result = ctrl.evaluate_and_mitigate(
             pid=90001,
             threat_result=make_threat_result("RANSOMWARE", confidence=0.95),
             metadata=make_metadata(),
             xgb_threat_name="PRIVILEGE_ESCALATION",
         )
-        self.assertEqual(result.action_taken, ActionType.SKIP_NO_CONSENSUS.value)
+        self.assertEqual(result.action_taken, ActionType.BLOCK_PID.value)
 
-    def test_agreement_passes(self):
-        ctrl = make_controller(dual_consensus=True)
-        result = ctrl.evaluate_and_mitigate(
-            pid=90001,
-            threat_result=make_threat_result("RANSOMWARE", confidence=0.95),
-            metadata=make_metadata(),
-            xgb_threat_name="RANSOMWARE",
-        )
-        self.assertNotEqual(result.action_taken, ActionType.SKIP_NO_CONSENSUS.value)
-
-    def test_single_model_mode_skips_consensus(self):
-        ctrl = make_controller(dual_consensus=False)
+    def test_single_model_mode_mitigates(self):
+        ctrl = make_controller(dry_run=False, dual_consensus=False)
         result = ctrl.evaluate_and_mitigate(
             pid=90001,
             threat_result=make_threat_result("RANSOMWARE", confidence=0.95),
             metadata=make_metadata(),
             xgb_threat_name="BENIGN",
         )
-        self.assertNotEqual(result.action_taken, ActionType.SKIP_NO_CONSENSUS.value)
+        self.assertEqual(result.action_taken, ActionType.BLOCK_PID.value)
 
 
 class TestSafetyLayer5_Cooldown(unittest.TestCase):

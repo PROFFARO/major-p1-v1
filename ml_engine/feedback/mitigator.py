@@ -284,19 +284,7 @@ class MitigationController:
                 self.audit.record(action)
                 return action
 
-            # ── Safety Layer 4: Dual-Model Consensus ──
-            if self.dual_consensus and rf_threat != xgb_threat_name:
-                action = create_action(
-                    pid=pid, metadata=metadata, threat_result=threat_result,
-                    rf_threat=rf_threat, xgb_threat=xgb_threat_name,
-                    action_type=ActionType.SKIP_NO_CONSENSUS,
-                    reason=f"Model disagreement: RF={rf_threat}, XGB={xgb_threat_name}",
-                )
-                self._stats["total_skipped"] += 1
-                self.audit.record(action)
-                return action
-
-            # ── Safety Layer 5: Cooldown Timer ──
+            # ── Safety Layer 4: Cooldown Timer ──
             if self._is_in_cooldown(pid):
                 action = create_action(
                     pid=pid, metadata=metadata, threat_result=threat_result,
