@@ -26,6 +26,17 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+type ClientConn struct {
+	conn    *websocket.Conn
+	writeMu sync.Mutex
+}
+
+func (c *ClientConn) WriteMessage(messageType int, data []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	return c.conn.WriteMessage(messageType, data)
+}
+
 // Server is the HTTP + WebSocket server for the agent.
 type Server struct {
 	events    <-chan *agentebpf.Event
@@ -35,7 +46,7 @@ type Server struct {
 
 	// WebSocket client management
 	mu      sync.RWMutex
-	clients map[*websocket.Conn]bool
+	clients map[*ClientConn]bool
 
 	upgrader websocket.Upgrader
 }
@@ -47,7 +58,7 @@ func NewServer(events <-chan *agentebpf.Event, bm *mapmgr.BlocklistManager, mc *
 		blocklist: bm,
 		metrics:   mc,
 		startTime: time.Now(),
-		clients:   make(map[*websocket.Conn]bool),
+		clients:   make(map[*ClientConn]bool),
 		upgrader: websocket.Upgrader{
 			// Allow all origins (for local dashboard development)
 			CheckOrigin: func(r *http.Request) bool { return true },
@@ -60,15 +71,15 @@ func NewServer(events <-chan *agentebpf.Event, bm *mapmgr.BlocklistManager, mc *
 func (s *Server) Start(ctx context.Context, addr string) error {
 	mux := http.NewServeMux()
 
-	// WebSocket endpoint
-	mux.HandleFunc("/ws", s.handleWebSocket)
-
 	// REST API endpoints
 	mux.HandleFunc("/api/status", s.handleStatus)
-	mux.HandleFunc("/api/metrics", s.handleMetrics)
 	mux.HandleFunc("/api/blocklist", s.handleListBlocklist)
 	mux.HandleFunc("/api/block/pid", s.handleBlockPID)
 	mux.HandleFunc("/api/block/ip", s.handleBlockIP)
+	mux.HandleFunc("/api/metrics", s.handleMetrics)
+
+	// WebSocket streaming endpoint
+	mux.HandleFunc("/ws", s.handleWebSocket)
 
 	// CORS middleware wrapper
 	handler := corsMiddleware(mux)
@@ -102,31 +113,43 @@ func (s *Server) Start(ctx context.Context, addr string) error {
 // ─────────────────────────────────────────────────────────────
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	conn, err := s.upgrader.Upgrade(w, r, nil)
+	rawConn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("[server] WebSocket upgrade failed: %v", err)
 		return
 	}
 
+	client := &ClientConn{conn: rawConn}
+
 	s.mu.Lock()
-	s.clients[conn] = true
+	s.clients[client] = true
 	clientCount := len(s.clients)
 	s.mu.Unlock()
 
 	log.Printf("[server] WebSocket client connected (total: %d)", clientCount)
 
-	// Keep connection alive; read loop to detect disconnects
+	// Keep connection alive & relay any client-injected synthetic events (e.g., attack simulation streams)
 	go func() {
 		defer func() {
 			s.mu.Lock()
-			delete(s.clients, conn)
+			delete(s.clients, client)
 			s.mu.Unlock()
-			conn.Close()
+			client.conn.Close()
 			log.Printf("[server] WebSocket client disconnected")
 		}()
 		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
+			msgType, msg, err := client.conn.ReadMessage()
+			if err != nil {
 				return
+			}
+			if msgType == websocket.TextMessage && len(msg) > 0 {
+				s.mu.RLock()
+				for target := range s.clients {
+					if target != client {
+						_ = target.WriteMessage(websocket.TextMessage, msg)
+					}
+				}
+				s.mu.RUnlock()
 			}
 		}
 	}()
@@ -149,10 +172,10 @@ func (s *Server) broadcastLoop(ctx context.Context) {
 			}
 
 			s.mu.RLock()
-			for conn := range s.clients {
-				err := conn.WriteMessage(websocket.TextMessage, data)
+			for client := range s.clients {
+				err := client.WriteMessage(websocket.TextMessage, data)
 				if err != nil {
-					conn.Close()
+					client.conn.Close()
 					// Removal from map happens in the read goroutine
 				}
 			}

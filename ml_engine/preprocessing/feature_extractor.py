@@ -75,6 +75,17 @@ FILE_OP_RENAME  = 5
 FILE_OP_CHMOD   = 6
 FILE_OP_CHOWN   = 7
 
+EVENT_TYPE_MAP = {
+    "SYSCALL": EVENT_SYSCALL,
+    "SYS_EXEC": EVENT_EXEC,
+    "EXEC": EVENT_EXEC,
+    "EXIT": EVENT_EXIT,
+    "FILE": EVENT_FILE,
+    "NET": EVENT_NET,
+    "PRIV": EVENT_PRIV,
+    "MEM": EVENT_MEM,
+}
+
 
 # ─────────────────────────────────────────────────────────────
 # Sliding Window Accumulator (per PID)
@@ -118,9 +129,12 @@ class PIDWindow:
             self.end_ns = ts
 
         event_type = ev.get("event_type", 0)
+        if isinstance(event_type, str):
+            event_type = EVENT_TYPE_MAP.get(event_type.upper(), EVENT_SYSCALL)
+
         syscall_id = ev.get("syscall_id", 0)
         retval = ev.get("retval", 0)
-        filename = ev.get("filename", "")
+        filename = ev.get("filename", "") or ev.get("file_path", "")
         file_op = ev.get("file_op", 0)
         parent = ev.get("parent_comm", "")
         exe = ev.get("exe_path", "")
@@ -135,7 +149,7 @@ class PIDWindow:
             self.comm = comm
 
         # ── Syscall ID tracking ──
-        if event_type == EVENT_SYSCALL and syscall_id > 0:
+        if (event_type in (EVENT_SYSCALL, EVENT_EXEC)) and syscall_id > 0:
             self.syscall_ids.append(syscall_id)
 
         # ── File operation tracking ──
@@ -291,7 +305,7 @@ class StreamingExtractor:
     def ingest(self, ev: dict) -> list[tuple[int, np.ndarray, dict]]:
         """
         Process a single event. Returns a list of (pid, feature_vector, metadata)
-        tuples for any windows that have closed due to this event's timestamp.
+        tuples for any windows that have closed due to timestamp or event volume threshold.
         """
         pid = ev.get("pid", 0)
         ts = ev.get("timestamp_ns", 0)
@@ -305,9 +319,9 @@ class StreamingExtractor:
 
         window = self.windows[pid]
 
-        # If the event is beyond the current window boundary, flush and start new
+        # If window duration exceeded or event count reaches batch threshold (25 events), flush and evaluate
         results = []
-        if ts - window.start_ns > self.window_ns:
+        if (ts - window.start_ns > self.window_ns) or (window.event_count >= 25):
             vec = window.to_feature_vector()
             if vec is not None:
                 results.append((pid, vec, window.to_metadata()))
@@ -321,6 +335,22 @@ class StreamingExtractor:
     def process_event(self, ev: dict) -> list[tuple[int, np.ndarray, dict]]:
         """Alias for ingest() method."""
         return self.ingest(ev)
+
+    def flush_expired(self, current_ns: int = 0) -> list[tuple[int, np.ndarray, dict]]:
+        """Flush any active windows that have exceeded the sliding window duration or have pending events."""
+        if current_ns <= 0:
+            current_ns = int(time.time() * 1e9)
+        results = []
+        pids_to_remove = []
+        for pid, window in list(self.windows.items()):
+            if (current_ns - window.start_ns > self.window_ns) or (window.event_count >= MIN_EVENTS_PER_WINDOW):
+                vec = window.to_feature_vector()
+                if vec is not None:
+                    results.append((pid, vec, window.to_metadata()))
+                pids_to_remove.append(pid)
+        for pid in pids_to_remove:
+            del self.windows[pid]
+        return results
 
     def flush_all(self) -> list[tuple[int, np.ndarray, dict]]:
         """Flush all active windows and return their feature vectors."""

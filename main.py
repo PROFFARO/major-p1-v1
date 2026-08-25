@@ -20,6 +20,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 import json
@@ -376,13 +377,27 @@ class UnifiedSystemOrchestrator:
 
                 elif cmd.lower() == "status":
                     stats = self.engine.get_stats()
-                    blocks = self.mitigator.get_active_blocks()
+                    mem_blocks = self.mitigator.get_active_blocks()
+                    db_blocks = self.db_mgr.sqlite.get_active_blocks()
+                    agent_blocks = []
+                    if self.agent_process:
+                        try:
+                            req = urllib.request.Request(f"http://localhost:{self.listen_agent.split(':')[-1]}/api/blocklist")
+                            with urllib.request.urlopen(req, timeout=2) as resp:
+                                agent_blocks = json.loads(resp.read().decode('utf-8'))
+                        except Exception:
+                            pass
+                    
+                    active_blocks_count = max(len(mem_blocks), len(db_blocks), len(agent_blocks))
+                    db_alerts = self.db_mgr.sqlite.get_alerts(limit=10000)
+                    total_threats = max(stats.get('total_threats_detected', 0), len(db_alerts))
+
                     print(f"\n📊 Live Operational Status:")
                     print(f"   • Total Events Ingested  : {stats.get('total_events_ingested', 0):,}")
                     print(f"   • Telemetry Throughput   : {stats.get('events_per_second', 0.0):.1f} EPS")
                     print(f"   • Active Feature Windows : {stats.get('active_pid_windows', 0)}")
-                    print(f"   • Total Threats Detected : {stats.get('total_threats_detected', 0)}")
-                    print(f"   • Active Kernel Blocks   : {len(blocks)}")
+                    print(f"   • Total Threats Detected : {total_threats}")
+                    print(f"   • Active Kernel Blocks   : {active_blocks_count}")
                     print(f"   • Go Agent Process PID   : {self.agent_process.pid if self.agent_process else 'N/A'}\n")
 
                 elif cmd.lower() == "blocks":

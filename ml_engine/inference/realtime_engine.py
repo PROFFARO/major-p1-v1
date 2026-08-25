@@ -286,6 +286,11 @@ class RealtimeIngestionEngine:
 
         # Feed event into StreamingExtractor
         completed_windows = self.extractor.ingest(event)
+        
+        # Also check for any expired windows that reached minimum event count
+        expired_windows = self.extractor.flush_expired(int(now * 1e9))
+        if expired_windows:
+            completed_windows.extend(expired_windows)
 
         for pid, vector, metadata in completed_windows:
             action = self._process_feature_window(pid, vector, metadata)

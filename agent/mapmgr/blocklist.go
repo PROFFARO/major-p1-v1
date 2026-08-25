@@ -5,6 +5,7 @@
 package mapmgr
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"sync"
@@ -84,7 +85,7 @@ func (bm *BlocklistManager) UnblockPID(pid uint32) error {
 	bm.mu.Lock()
 	defer bm.mu.Unlock()
 
-	if err := bm.pidBlocklist.Delete(pid); err != nil {
+	if err := bm.pidBlocklist.Delete(pid); err != nil && !errors.Is(err, cilium.ErrKeyNotExist) {
 		return fmt.Errorf("failed to unblock PID %d: %w", pid, err)
 	}
 
@@ -145,12 +146,12 @@ func (bm *BlocklistManager) UnblockIP(ipStr string) error {
 		return err
 	}
 
-	if err := bm.ipBlocklist.Delete(ipKey); err != nil {
+	if err := bm.ipBlocklist.Delete(ipKey); err != nil && !errors.Is(err, cilium.ErrKeyNotExist) {
 		return fmt.Errorf("failed to unblock IP %s from LSM: %w", ipStr, err)
 	}
 
 	if bm.netIPBlocklist != nil {
-		bm.netIPBlocklist.Delete(ipKey) // best-effort
+		_ = bm.netIPBlocklist.Delete(ipKey) // best-effort
 	}
 
 	delete(bm.ipEntries, ipKey)

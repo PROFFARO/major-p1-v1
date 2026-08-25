@@ -440,7 +440,8 @@ def main():
     parser = argparse.ArgumentParser(description="Kaggle/Cloud ML Training Script for eBPF Engine")
     parser.add_argument("--dataset-dir", type=str, default="/kaggle/input", help="Path to directory containing .jsonl dataset files")
     parser.add_argument("--num-samples", type=int, default=5000, help="Number of attack samples per threat class")
-    parser.add_argument("--output-dir", type=str, default="./saved_models", help="Directory to save trained models")
+    default_saved_dir = Path(__file__).resolve().parent / "models" / "saved_models"
+    parser.add_argument("--output-dir", type=str, default=str(default_saved_dir), help="Directory to save trained models")
     parser.add_argument("--test-size", type=float, default=0.20, help="Test set split fraction")
 
     args, _ = parser.parse_known_args()

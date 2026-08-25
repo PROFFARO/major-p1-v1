@@ -40,25 +40,29 @@ async def simulate_ransomware_attack(pid=99999, comm="nc_reverse_shell", dst_ip=
             # Send 50 rapid anomalous syscall events matching REVERSE_SHELL / RANSOMWARE pattern
             for i in range(50):
                 ts = base_ns + int(i * 0.05 * 1e9)
+                event_type = 4 if i % 3 == 0 else (5 if i % 3 == 1 else 6)
                 evt = {
-                    "event_type": "SYS_EXEC",
+                    "event_type": event_type,
                     "timestamp_ns": ts,
                     "pid": pid,
                     "ppid": 1,
-                    "uid": 1000,
-                    "gid": 1000,
+                    "uid": 0,
+                    "gid": 0,
                     "comm": comm,
                     "exe_path": f"/tmp/{comm}",
-                    "parent_comm": "bash",
-                    "syscall_id": 42 if i % 2 == 0 else 59,  # connect / execve
-                    "file_path": f"/dev/tcp/{dst_ip}/4444",
-                    "bytes_written": 65536,
+                    "parent_comm": "nc",
+                    "syscall_id": 105 if i % 4 == 0 else (9 if i % 4 == 1 else (42 if i % 4 == 2 else 59)),
+                    "file_path": "/etc/shadow" if i % 2 == 0 else "/etc/passwd",
+                    "filename": "/etc/shadow" if i % 2 == 0 else "/etc/passwd",
+                    "file_op": 3,  # FILE_OP_WRITE
+                    "bytes_written": 1048576,
                     "bytes_read": 1024,
                     "dst_ip": dst_ip,
                     "dst_port": 4444,
+                    "retval": -1 if i % 5 == 0 else 0,
                 }
                 await ws.send(json.dumps(evt))
-                await asyncio.sleep(0.02)
+                await asyncio.sleep(0.01)
                 
             print("✔ Threat telemetry stream injection complete!")
             print("[*] Waiting 6 seconds for ingestion engine feature window aggregation & model evaluation...")
