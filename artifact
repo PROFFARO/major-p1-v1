@@ -1,0 +1,134 @@
+# Comprehensive Enhancement: Full Telemetry Capture, Real-Time Enforcement & API Hardening
+
+Overhaul the eBPF-ML security pipeline to achieve **total OS-level visibility**, **instant real-time blocking/unblocking**, and **production-grade API endpoints** — platform-agnostic for bare-metal, VMs, and containers.
+
+## User Review Required
+
+> [!IMPORTANT]
+> This plan touches every layer — kernel eBPF probes, Go agent, Python ML engine, REST API, and storage. It is a significant change set. Please review each component and confirm before execution.
+
+> [!WARNING]
+> The eBPF C probes (`bpf/probes/`) and Go agent (`agent/`) changes require `sudo` to rebuild and reload. Python-side changes can be tested without root via `--no-agent` mode.
+
+---
+
+## Proposed Changes
+
+### Component 1: Python Telemetry Event Log — Full OS Event Streaming
+
+Currently, raw events flow through the WebSocket and into the ML feature extractor, but individual events are **not logged in a queryable form** for analyst forensics. The DuckDB `telemetry_events` table exists but only receives batch-inserted events from the `AsyncBatchDatabaseWriter` — many are dropped under load.
+
+#### [MODIFY] [realtime_engine.py](file:///home/proffaro/Documents/major-p1-v1/ml_engine/inference/realtime_engine.py)
+
+- Add a **full raw event logging pathway**: every valid JSON event received on the WebSocket is enqueued to the `AsyncBatchDatabaseWriter` for DuckDB persistence, regardless of whether it forms a feature window.
+- Add a **live event stream counter** per event type (`SYSCALL`, `EXEC`, `EXIT`, `FILE`, `NET`, `PRIV`, `MEM`) to the `get_stats()` output so analysts can see the breakdown.
+- Ensure `parent_comm` is resolved from `ppid` → `comm` lookup cache (maintained in-memory) so downstream feature extraction gets accurate parent process names.
+
+#### [MODIFY] [feature_extractor.py](file:///home/proffaro/Documents/major-p1-v1/ml_engine/preprocessing/feature_extractor.py)
+
+- Remove hardcoded OS-specific assumptions (e.g., specific syscall numbers for x86_64 only). Instead, use the **event_type enum** from `common.h` which is architecture-agnostic. The feature extractor already does this for most features but `PRIV_ESCALATION_SYSCALLS` and `MEMORY_EXEC_SYSCALLS` lists in `config.py` are x86_64-specific.
+- Add a `container_id` / `cgroup_id` passthrough field to the metadata dict so container workload events are tagged and filterable.
+
+---
+
+### Component 2: Enhanced Real-Time Blocking & Unblocking
+
+The current blocking flow has these issues:
+1. `mitigator.py` sends HTTP POST to Go Agent → Go Agent writes to eBPF map. This works but has **no confirmation feedback** (the HTTP response is logged but not validated).
+2. The `unblock` flow in `mitigator.py` uses HTTP DELETE but the `unblock_pid()` method does not update SQLite WAL `active_blocks` table reliably.
+3. The SOC CLI `unblock <PID>` command does not confirm the kernel-level unblock succeeded.
+
+#### [MODIFY] [mitigator.py](file:///home/proffaro/Documents/major-p1-v1/ml_engine/feedback/mitigator.py)
+
+- **Verified Block Confirmation**: After sending `POST /api/block/pid`, parse the JSON response and verify `"status": "blocked"`. If the Go agent returns an error or is unreachable, set `action_taken` to `BLOCK_FAILED` (new ActionType) instead of silently logging `CONNECTION_ERROR`.
+- **Verified Unblock Flow**: After sending `DELETE /api/block/pid`, confirm removal from both the Go agent response AND the SQLite WAL `active_blocks` table. Return a structured result to the caller.
+- **Immediate Re-evaluation on Unblock**: When a PID is unblocked, clear its cooldown timer so the ML engine can re-evaluate it if new events arrive.
+- **Block-on-First-Window**: Reduce `MITIGATION_COOLDOWN_SECONDS` from `30.0` to `5.0` so that a re-appearing threat PID gets blocked again faster.
+
+#### [MODIFY] [actions.py](file:///home/proffaro/Documents/major-p1-v1/ml_engine/feedback/actions.py)
+
+- Add `BLOCK_FAILED = "BLOCK_FAILED"` to the `ActionType` enum for cases where the Go agent is unreachable or returns an error.
+
+#### [MODIFY] [config.py](file:///home/proffaro/Documents/major-p1-v1/ml_engine/config.py)
+
+- Set `MITIGATION_COOLDOWN_SECONDS = 5.0`.
+- Set `DRY_RUN_DEFAULT = False` so the system ships in enforcement mode by default (users can override with `--dry-run`).
+
+---
+
+### Component 3: Enhanced REST API Endpoints
+
+The current FastAPI routes are functional but limited. Add full CRUD coverage and new diagnostic endpoints.
+
+#### [MODIFY] [routes.py](file:///home/proffaro/Documents/major-p1-v1/ml_engine/api/routes.py)
+
+Add the following new endpoints:
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/v1/blocks/pid` | **Manual PID block** — analyst can block any PID from the dashboard |
+| `POST` | `/api/v1/blocks/ip` | **Manual IP block** — analyst can block any IP from the dashboard |
+| `DELETE` | `/api/v1/blocks/ip` | **Unblock IP** — remove IP from kernel eBPF map |
+| `GET` | `/api/v1/events/stream` | **SSE live event stream** — Server-Sent Events for dashboard real-time feed |
+| `GET` | `/api/v1/events/stats` | **Event type breakdown** — counts per event type (SYSCALL, EXEC, FILE, NET, etc.) |
+| `GET` | `/api/v1/system/status` | **Full system health** — Go agent status, ML model status, DB connectivity, uptime |
+| `GET` | `/api/v1/kernel/blocklist` | **Direct kernel map query** — proxy to Go agent `/api/blocklist` for kernel-level truth |
+
+#### [MODIFY] [models.py](file:///home/proffaro/Documents/major-p1-v1/ml_engine/storage/models.py)
+
+- Add `BlockPIDRequest`, `BlockIPRequest`, `UnblockIPRequest` Pydantic DTOs.
+- Add `SystemStatusResponse` DTO with fields for Go agent connectivity, model loaded status, DB health, uptime, and EPS throughput.
+- Add `EventStatsResponse` DTO with per-event-type counters.
+
+---
+
+### Component 4: Platform-Agnostic Configuration
+
+#### [MODIFY] [config.py](file:///home/proffaro/Documents/major-p1-v1/ml_engine/config.py)
+
+- Move `PRIV_ESCALATION_SYSCALLS` and `MEMORY_EXEC_SYSCALLS` behind a `SYSCALL_ABI` config variable (default: `"x86_64"`, future: `"aarch64"`). This makes the system container/architecture aware.
+- Add `CGROUP_AWARE = True` config flag to enable per-cgroup event tagging for container workloads.
+
+#### [MODIFY] [feature_extractor.py](file:///home/proffaro/Documents/major-p1-v1/ml_engine/preprocessing/feature_extractor.py)
+
+- Use the `SYSCALL_ABI` lookup table instead of hardcoded syscall number lists.
+
+---
+
+### Component 5: SOC Command Center Enhancements
+
+#### [MODIFY] [main.py](file:///home/proffaro/Documents/major-p1-v1/main.py)
+
+- Fix the `status` and `blocks` commands that reference `self.listen_agent` (should be `self.agent_listen`) — currently crashes.
+- Add a `block <PID>` command to the interactive CLI so analysts can manually block PIDs from the console.
+- Add an `events` command that shows the last N raw events from DuckDB with event type breakdown.
+- Add a `kernel` command that queries the Go agent `/api/blocklist` endpoint and displays the raw kernel eBPF hash map contents.
+
+---
+
+### Component 6: Test Suite Updates
+
+#### [MODIFY] [test_mitigator.py](file:///home/proffaro/Documents/major-p1-v1/tests/test_mitigator.py)
+
+- Add test for `BLOCK_FAILED` action type when Go agent is unreachable.
+- Update docstring to reflect the new safety layer numbering (no more Layer 4 consensus).
+
+#### [MODIFY] [test_api.py](file:///home/proffaro/Documents/major-p1-v1/tests/test_api.py)
+
+- Add tests for new endpoints: `POST /blocks/pid`, `POST /blocks/ip`, `GET /events/stats`, `GET /system/status`.
+
+---
+
+## Verification Plan
+
+### Automated Tests
+1. Run `python tests/run_all_tests.py` — verify 100% pass rate with all new and updated tests.
+2. Run `python scripts/simulate_attack.py --mode ransomware` — verify the audit log shows `BLOCK_PID` with `agent_response` containing `"status":"blocked"`.
+
+### Manual Verification
+1. Start `sudo python main.py` and use the `status`, `blocks`, `block <PID>`, `unblock <PID>`, `events`, and `kernel` CLI commands.
+2. Test all new REST API endpoints via `curl`:
+   - `curl http://localhost:8901/api/v1/system/status`
+   - `curl http://localhost:8901/api/v1/events/stats`
+   - `curl -X POST http://localhost:8901/api/v1/blocks/pid -d '{"pid":12345,"reason":"manual"}'`
+3. Confirm blocked PIDs appear in kernel eBPF map via `sudo bpftool map dump name blocked_pids`.
