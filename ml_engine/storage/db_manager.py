@@ -425,14 +425,16 @@ class SQLiteWALManager:
 class AsyncBatchDatabaseWriter:
     """Non-blocking background queue worker that micro-batches raw events into DuckDB every 200ms."""
 
-    def __init__(self, duckdb_mgr: DuckDBManager, max_batch_size: int = 500, flush_interval_sec: float = 0.2):
+    def __init__(self, duckdb_mgr: DuckDBManager, max_batch_size: int = 2000, flush_interval_sec: float = 0.1):
         self.duckdb_mgr = duckdb_mgr
         self.max_batch_size = max_batch_size
         self.flush_interval_sec = flush_interval_sec
 
-        self._queue = queue.Queue(maxsize=50000)
+        self._queue = queue.Queue(maxsize=200000)
         self._running = False
         self._worker_thread: Optional[threading.Thread] = None
+        self._dropped_count = 0
+        self._last_drop_log_time = 0.0
 
     def start(self):
         """Start the background micro-batch worker thread."""
@@ -458,7 +460,15 @@ class AsyncBatchDatabaseWriter:
         try:
             self._queue.put_nowait(event)
         except queue.Full:
-            logger.warning("Database insert queue full! Dropping event for PID %s", event.get("pid"))
+            self._dropped_count += 1
+            now = time.time()
+            if now - self._last_drop_log_time >= 5.0:
+                logger.warning(
+                    "Database insert queue full! Dropped %d events in the last 5s (current queue size: %d)",
+                    self._dropped_count, self._queue.qsize()
+                )
+                self._dropped_count = 0
+                self._last_drop_log_time = now
 
     def flush(self):
         """Flush all pending events in queue to DuckDB."""
