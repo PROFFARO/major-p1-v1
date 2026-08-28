@@ -6,6 +6,7 @@
 #include "../include/vmlinux.h"
 #include "../include/bpf_helpers.h"
 #include "../include/common.h"
+#include "../include/netobserv_flow.h"
 
 char LICENSE[] SEC("license") = "GPL";
 

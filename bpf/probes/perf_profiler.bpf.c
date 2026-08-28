@@ -8,10 +8,11 @@
  */
 
 #include "vmlinux.h"
-#include <bpf/bpf_helpers.h>
-#include <bpf/bpf_tracing.h>
+#include "bpf_helpers.h"
+#include "bpf_tracing.h"
 
 #include "../include/common.h"
+#include "../include/pyroscope_profile.h"
 
 char LICENSE[] SEC("license") = "Dual BSD/GPL";
 

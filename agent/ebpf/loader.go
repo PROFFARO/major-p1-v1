@@ -16,6 +16,7 @@ type ProbeSet struct {
 	// Collections hold the loaded eBPF programs and maps per probe file
 	SysTracer    *ebpf.Collection
 	LSMEnforcer  *ebpf.Collection
+	TetragonLSM  *ebpf.Collection
 	NetFilter    *ebpf.Collection
 	SSLTracer    *ebpf.Collection
 	PerfProfiler *ebpf.Collection
@@ -24,11 +25,12 @@ type ProbeSet struct {
 	links []link.Link
 
 	// ── Ring Buffer Maps (read by ringbuf.go) ──
-	SysTracerEvents *ebpf.Map // "events"      from sys_tracer.bpf.o
-	LSMEvents       *ebpf.Map // "lsm_events"  from lsm_enforcer.bpf.o
-	NetEvents       *ebpf.Map // "net_events"   from net_filter.bpf.o
-	SSLEvents       *ebpf.Map // "ssl_events"   from ssl_tracer.bpf.o
-	PerfEvents      *ebpf.Map // "perf_events"  from perf_profiler.bpf.o
+	SysTracerEvents *ebpf.Map // "events"          from sys_tracer.bpf.o
+	LSMEvents       *ebpf.Map // "lsm_events"      from lsm_enforcer.bpf.o
+	TetragonEvents  *ebpf.Map // "tetragon_events" from tetragon_lsm.bpf.o
+	NetEvents       *ebpf.Map // "net_events"       from net_filter.bpf.o
+	SSLEvents       *ebpf.Map // "ssl_events"       from ssl_tracer.bpf.o
+	PerfEvents      *ebpf.Map // "perf_events"      from perf_profiler.bpf.o
 
 	// ── Telemetry Counter Maps (read-only for monitoring) ──
 	PktCounter  *ebpf.Map // "pkt_counter"  from net_filter.bpf.o
@@ -150,6 +152,21 @@ func LoadAndAttach(bpfDir string) (*ProbeSet, error) {
 			if err == nil {
 				ps.PerfEvents = ps.PerfProfiler.Maps["perf_events"]
 				log.Println("[loader] perf_profiler probe loaded")
+			}
+		}
+	}
+
+	// ────────────────────────────────────────────────────
+	// 6. Load tetragon_lsm.bpf.o (Cilium Tetragon probe)
+	// ────────────────────────────────────────────────────
+	tetraPath := bpfDir + "/tetragon_lsm.bpf.o"
+	if _, err := os.Stat(tetraPath); err == nil {
+		tetraSpec, err := ebpf.LoadCollectionSpec(tetraPath)
+		if err == nil {
+			ps.TetragonLSM, err = ebpf.NewCollection(tetraSpec)
+			if err == nil {
+				ps.TetragonEvents = ps.TetragonLSM.Maps["tetragon_events"]
+				log.Println("[loader] tetragon_lsm probe loaded")
 			}
 		}
 	}
@@ -304,6 +321,9 @@ func (ps *ProbeSet) Close() {
 	}
 	if ps.PerfProfiler != nil {
 		ps.PerfProfiler.Close()
+	}
+	if ps.TetragonLSM != nil {
+		ps.TetragonLSM.Close()
 	}
 
 	log.Println("[loader] All eBPF resources released.")

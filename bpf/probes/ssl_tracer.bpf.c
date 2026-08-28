@@ -8,11 +8,12 @@
  */
 
 #include "vmlinux.h"
-#include <bpf/bpf_helpers.h>
-#include <bpf/bpf_tracing.h>
-#include <bpf/bpf_core_read.h>
+#include "bpf_helpers.h"
+#include "bpf_tracing.h"
+#include "bpf_core_read.h"
 
 #include "../include/common.h"
+#include "../include/ecapture_ssl.h"
 
 char LICENSE[] SEC("license") = "Dual BSD/GPL";
 
@@ -96,3 +97,74 @@ int probe_ssl_read(struct pt_regs *ctx)
     bpf_ringbuf_submit(out, 0);
     return 0;
 }
+
+SEC("uprobe/SSL_write_ex")
+int probe_ssl_write_ex(struct pt_regs *ctx)
+{
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+    u32 pid = pid_tgid >> 32;
+
+    const char *buf = (const char *)PT_REGS_PARM2(ctx);
+    size_t num = (size_t)PT_REGS_PARM3(ctx);
+
+    if (!buf || num == 0)
+        return 0;
+
+    struct event_t *out;
+    out = bpf_ringbuf_reserve(&ssl_events, sizeof(*out), 0);
+    if (!out)
+        return 0;
+
+    __builtin_memset(out, 0, sizeof(*out));
+    out->timestamp_ns = bpf_ktime_get_ns();
+    out->pid = pid;
+    out->tgid = (u32)pid_tgid;
+    out->uid = bpf_get_current_uid_gid();
+    out->gid = bpf_get_current_uid_gid() >> 32;
+    out->event_type = EVENT_TYPE_NET;
+    out->flags = ECAPTURE_FLAG_SSL_WRITE_EX;
+
+    bpf_get_current_comm(&out->comm, sizeof(out->comm));
+
+    u32 read_len = num < (MAX_PAYLOAD_LEN - 1) ? num : (MAX_PAYLOAD_LEN - 1);
+    bpf_probe_read_user(&out->filename, read_len, buf);
+
+    bpf_ringbuf_submit(out, 0);
+    return 0;
+}
+
+SEC("uprobe/SSL_read_ex")
+int probe_ssl_read_ex(struct pt_regs *ctx)
+{
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+    u32 pid = pid_tgid >> 32;
+
+    const char *buf = (const char *)PT_REGS_PARM2(ctx);
+    size_t num = (size_t)PT_REGS_PARM3(ctx);
+
+    if (!buf || num == 0)
+        return 0;
+
+    struct event_t *out;
+    out = bpf_ringbuf_reserve(&ssl_events, sizeof(*out), 0);
+    if (!out)
+        return 0;
+
+    __builtin_memset(out, 0, sizeof(*out));
+    out->timestamp_ns = bpf_ktime_get_ns();
+    out->pid = pid;
+    out->tgid = (u32)pid_tgid;
+    out->uid = bpf_get_current_uid_gid();
+    out->gid = bpf_get_current_uid_gid() >> 32;
+    out->event_type = EVENT_TYPE_NET;
+    out->flags = ECAPTURE_FLAG_SSL_READ_EX;
+
+    bpf_get_current_comm(&out->comm, sizeof(out->comm));
+
+    u32 read_len = num < (MAX_PAYLOAD_LEN - 1) ? num : (MAX_PAYLOAD_LEN - 1);
+    bpf_probe_read_user(&out->filename, read_len, buf);
+
+    bpf_ringbuf_submit(out, 0);
+    return 0;
+}
+

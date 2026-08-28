@@ -49,6 +49,12 @@ class BehavioralEngine:
     def __init__(self):
         self.rules: List[BehavioralRule] = []
         self._init_rules()
+        try:
+            from ml_engine.rules.falco_engine import FalcoEngine
+            self.falco_engine = FalcoEngine()
+        except Exception as e:
+            logger.warning(f"Failed to initialize FalcoEngine: {e}")
+            self.falco_engine = None
 
     def _init_rules(self):
         # Rule 1: Sensitive File Read (/etc/shadow, /etc/sudoers)
@@ -194,4 +200,7 @@ class BehavioralEngine:
             res = rule.evaluate(event)
             if res:
                 alerts.append(res)
+        if self.falco_engine:
+            falco_alerts = self.falco_engine.evaluate_event(event)
+            alerts.extend(falco_alerts)
         return alerts

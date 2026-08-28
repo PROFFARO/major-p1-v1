@@ -1,0 +1,59 @@
+# Falco Security Detection Ruleset
+# Embedded directly for zero-dependency local behavioral threat evaluation
+
+- macro: container
+  condition: container_id != ""
+
+- macro: spawned_process
+  condition: event_type_str == "EXEC"
+
+- macro: sensitive_files
+  condition: filename startswith "/etc/shadow" or filename startswith "/etc/sudoers" or filename startswith "/root/.ssh"
+
+- macro: interactive_shells
+  condition: comm in ("bash", "sh", "dash", "zsh", "csh", "ksh")
+
+- macro: web_servers
+  condition: parent_comm in ("nginx", "httpd", "apache", "node", "php-fpm")
+
+- rule: Read Sensitive System Files
+  desc: Detect attempts to read sensitive system credential files
+  condition: sensitive_files and uid != 0
+  output: Sensitive file read by non-root process (user=%uid command=%comm file=%filename)
+  priority: WARNING
+  tags: [mitre_credential_access, T1003.008]
+
+- rule: Terminal Shell in Container
+  desc: Detect shell spawned inside a container environment
+  condition: container and spawned_process and interactive_shells
+  output: Shell spawned inside container (container_id=%container_id comm=%comm pid=%pid)
+  priority: NOTICE
+  tags: [mitre_execution, T1059]
+
+- rule: Web Server Spawned Shell
+  desc: Detect interactive shell spawned by web server process
+  condition: spawned_process and interactive_shells and web_servers
+  output: Shell spawned by web server (parent=%parent_comm comm=%comm pid=%pid)
+  priority: CRITICAL
+  tags: [mitre_persistence, T1505.003]
+
+- rule: Kernel Module Loading
+  desc: Detect insertion of kernel modules (rootkit indicator)
+  condition: syscall_id in (175, 313)
+  output: Kernel module load attempt detected (comm=%comm syscall=%syscall_id)
+  priority: CRITICAL
+  tags: [mitre_persistence, T1547.006]
+
+- rule: Ptrace Memory Injection
+  desc: Detect ptrace process inspection or memory injection
+  condition: syscall_id == 101
+  output: Ptrace invoked by process (comm=%comm pid=%pid)
+  priority: CRITICAL
+  tags: [mitre_defense_evasion, T1055.008]
+
+- rule: Container Namespace Escape
+  desc: Detect attempts to break container isolation via setns/unshare
+  condition: syscall_id in (308, 272)
+  output: Namespace escape attempt detected (comm=%comm syscall=%syscall_id)
+  priority: CRITICAL
+  tags: [mitre_privilege_escalation, T1611]

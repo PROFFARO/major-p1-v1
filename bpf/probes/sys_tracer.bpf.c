@@ -7,6 +7,7 @@
 #include "../include/bpf_helpers.h"
 #include "../include/bpf_tracing.h"
 #include "../include/common.h"
+#include "../include/tracee_events.h"
 
 char LICENSE[] SEC("license") = "GPL";
 
@@ -489,3 +490,21 @@ int kp_fchownat(struct pt_regs *ctx)
     submit(e);
     return 0;
 }
+
+/* ════════════════════════════════════════════════════════════
+   8. AQUA TRACEE FORENSIC DETECTORS
+   ════════════════════════════════════════════════════════════ */
+
+SEC("kprobe/do_mprotect_pkey")
+int kp_tracee_mprotect_alert(struct pt_regs *ctx)
+{
+    struct event_t *e = get_event();
+    if (!e) return 0;
+    __builtin_memset(e, 0, sizeof(*e));
+    fill_common(e, EVENT_TYPE_MEM);
+    e->syscall_id = TRACEE_EVENT_MEM_PROT_ALERT;
+    e->flags = TRACEE_ALERT_MPROT_X_ADD;
+    submit(e);
+    return 0;
+}
+
