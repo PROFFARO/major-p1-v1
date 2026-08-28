@@ -318,13 +318,8 @@ class LLMSecurityCopilot:
         active_blocks: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         audit_json = json.dumps(audit_history[:10] if audit_history else [], indent=2)
-        blocks_json = json.dumps(active_blocks or [], indent=2)
 
         prompt = ANALYST_CHAT_PROMPT.format(
-            active_blocks_count=len(active_blocks) if active_blocks else 0,
-            total_evaluations=len(audit_history) if audit_history else 0,
-            total_blocked=sum(1 for a in (audit_history or []) if "BLOCK" in str(a.get("action_taken", ""))),
-            active_blocks_json=blocks_json,
             audit_history_json=audit_json,
             user_query=user_query,
         )

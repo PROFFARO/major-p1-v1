@@ -298,21 +298,46 @@ class SQLiteWALManager:
             conn.close()
             logger.debug("SQLite WAL Transactional Store initialized at %s", self.db_path)
 
-    def insert_alert(self, alert: ThreatAlertRecord) -> int:
-        """Insert a threat alert record and return generated ID."""
+    def insert_alert(self, alert) -> int:
+        """Insert a threat alert record (ThreatAlertRecord or dict) and return generated ID."""
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
-            feat_json = json.dumps(alert.feature_summary) if alert.feature_summary else "{}"
+
+            if isinstance(alert, dict):
+                ts = str(alert.get("timestamp", time.time()))
+                pid = alert.get("pid", 0)
+                comm = alert.get("comm", "")
+                exe_path = alert.get("exe_path", "")
+                threat_name = alert.get("threat_type", "UNKNOWN")
+                confidence = alert.get("confidence", 0.0)
+                action_taken = alert.get("detection_source", "alert")
+                rf_threat = alert.get("rule_name", "")
+                xgb_threat = alert.get("mitre_id", "")
+                iso_anomaly = 1 if alert.get("severity") in ("HIGH", "CRITICAL") else 0
+                feat_json = json.dumps(alert.get("ml_scores", {}))
+            else:
+                ts = alert.timestamp
+                pid = alert.pid
+                comm = alert.comm
+                exe_path = alert.exe_path
+                threat_name = alert.threat_name
+                confidence = alert.confidence
+                action_taken = alert.action_taken
+                rf_threat = alert.rf_threat
+                xgb_threat = alert.xgb_threat
+                iso_anomaly = int(alert.iso_anomaly)
+                feat_json = json.dumps(alert.feature_summary) if alert.feature_summary else "{}"
+
             cursor.execute("""
                 INSERT INTO threat_alerts (
                     timestamp, pid, comm, exe_path, threat_name, confidence,
                     consensus_agreed, action_taken, rf_threat, xgb_threat, iso_anomaly, feature_summary
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                alert.timestamp, alert.pid, alert.comm, alert.exe_path, alert.threat_name,
-                alert.confidence, int(alert.consensus_agreed), alert.action_taken,
-                alert.rf_threat, alert.xgb_threat, int(alert.iso_anomaly), feat_json
+                ts, pid, comm, exe_path, threat_name,
+                confidence, 1, action_taken,
+                rf_threat, xgb_threat, iso_anomaly, feat_json
             ))
             alert_id = cursor.lastrowid
             conn.commit()

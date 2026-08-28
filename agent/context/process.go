@@ -20,18 +20,20 @@ import (
 
 // ProcCacheEntry caches metadata for a process executable to prevent disk thrashing.
 type ProcCacheEntry struct {
-	ExePath    string
-	Cmdline    string
-	ParentComm string
-	ExeHash    string
-	Timestamp  time.Time
+	ExePath     string
+	Cmdline     string
+	ParentComm  string
+	ExeHash     string
+	ContainerID string
+	CgroupPath  string
+	Timestamp   time.Time
 }
 
 // ProcessResolver enriches telemetry events with /proc metadata.
 type ProcessResolver struct {
-	mu         sync.RWMutex
-	cache      map[uint32]*ProcCacheEntry
-	hashCache  map[string]string // ExePath -> SHA256
+	mu          sync.RWMutex
+	cache       map[uint32]*ProcCacheEntry
+	hashCache   map[string]string // ExePath -> SHA256
 	maxCacheAge time.Duration
 }
 
@@ -47,7 +49,7 @@ func NewProcessResolver() *ProcessResolver {
 	return pr
 }
 
-// Enrich fills in ExePath, Cmdline, ParentComm, and ExeHash on an Event struct.
+// Enrich fills in ExePath, Cmdline, ParentComm, ExeHash, and ContainerID on an Event struct.
 func (pr *ProcessResolver) Enrich(ev *agentebpf.Event) {
 	if ev == nil || ev.PID == 0 {
 		return
@@ -69,9 +71,10 @@ func (pr *ProcessResolver) Enrich(ev *agentebpf.Event) {
 	ev.Cmdline = entry.Cmdline
 	ev.ParentComm = entry.ParentComm
 	ev.ExeHash = entry.ExeHash
+	ev.ContainerID = entry.ContainerID
 }
 
-// lookupProc reads /proc/<pid>/exe, /proc/<pid>/cmdline, and /proc/<ppid>/comm
+// lookupProc reads /proc/<pid>/exe, /proc/<pid>/cmdline, /proc/<ppid>/comm, and /proc/<pid>/cgroup
 func (pr *ProcessResolver) lookupProc(pid, ppid uint32) *ProcCacheEntry {
 	entry := &ProcCacheEntry{
 		Timestamp: time.Now(),
@@ -97,6 +100,30 @@ func (pr *ProcessResolver) lookupProc(pid, ppid uint32) *ProcCacheEntry {
 		commBytes, err := os.ReadFile(fmt.Sprintf("/proc/%d/comm", ppid))
 		if err == nil {
 			entry.ParentComm = strings.TrimSpace(string(commBytes))
+		}
+	}
+
+	// Extract Container ID & Cgroup from /proc/<pid>/cgroup
+	cgroupBytes, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
+	if err == nil {
+		lines := strings.Split(string(cgroupBytes), "\n")
+		for _, line := range lines {
+			parts := strings.Split(line, ":")
+			if len(parts) >= 3 {
+				cpath := parts[2]
+				entry.CgroupPath = cpath
+				// Heuristic parsing for Docker/Podman/K8s container IDs (64-char hex strings)
+				subparts := strings.Split(cpath, "/")
+				for _, sp := range subparts {
+					sp = strings.TrimPrefix(sp, "docker-")
+					sp = strings.TrimPrefix(sp, "cri-containerd-")
+					sp = strings.TrimSuffix(sp, ".scope")
+					if len(sp) == 64 {
+						entry.ContainerID = sp[:12] // Short 12-char ID
+						break
+					}
+				}
+			}
 		}
 	}
 

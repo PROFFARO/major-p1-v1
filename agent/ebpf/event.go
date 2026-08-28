@@ -182,10 +182,11 @@ type Event struct {
 	Source     string    `json:"source"` // "sys_tracer", "lsm_enforcer", or "net_filter"
 
 	// ── Process Context Enrichment (populated by agent/context) ──
-	ExePath    string `json:"exe_path,omitempty"`
-	Cmdline    string `json:"cmdline,omitempty"`
-	ParentComm string `json:"parent_comm,omitempty"`
-	ExeHash    string `json:"exe_hash,omitempty"` // SHA256 of binary
+	ExePath     string `json:"exe_path,omitempty"`
+	Cmdline     string `json:"cmdline,omitempty"`
+	ParentComm  string `json:"parent_comm,omitempty"`
+	ExeHash     string `json:"exe_hash,omitempty"`     // SHA256 of binary
+	ContainerID string `json:"container_id,omitempty"` // Container ID (Docker/K8s)
 }
 
 // ParseRawEvent converts a raw byte slice from the BPF ring buffer

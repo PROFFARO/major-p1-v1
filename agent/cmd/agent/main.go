@@ -18,7 +18,6 @@ import (
 	procctx "github.com/proffaro/ebpf-ml-agent/context"
 	agentebpf "github.com/proffaro/ebpf-ml-agent/ebpf"
 	"github.com/proffaro/ebpf-ml-agent/logger"
-	"github.com/proffaro/ebpf-ml-agent/mapmgr"
 	"github.com/proffaro/ebpf-ml-agent/metrics"
 	"github.com/proffaro/ebpf-ml-agent/server"
 )
@@ -73,13 +72,8 @@ func main() {
 		}
 	}
 
-	// 4. Initialize Metrics Collector & Blocklist Manager
+	// 4. Initialize Metrics Collector
 	metricsColl := metrics.NewCollector(probes.PktCounter, probes.DNSCounter)
-	bm := mapmgr.NewBlocklistManager(
-		probes.PIDBlocklist,
-		probes.IPBlocklist,
-		probes.NetIPBlocklist,
-	)
 
 	// 5. Start Ring Buffer Event Stream
 	ctx, cancel := context.WithCancel(context.Background())
@@ -117,7 +111,7 @@ func main() {
 
 	// 6. Start REST API & WebSocket Server
 	log.Printf("[agent] Listening for WebSocket clients and API requests on %s", *listenAddr)
-	srv := server.NewServer(enrichedCh, bm, metricsColl)
+	srv := server.NewServer(enrichedCh, metricsColl)
 
 	go func() {
 		if err := srv.Start(ctx, *listenAddr); err != nil {

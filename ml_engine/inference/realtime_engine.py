@@ -37,8 +37,8 @@ from ml_engine.config import (
 )
 from ml_engine.preprocessing.feature_extractor import StreamingExtractor
 from ml_engine.models.detector import ThreatDetector
-from ml_engine.feedback.mitigator import MitigationController
-from ml_engine.feedback.actions import MitigationAction
+from ml_engine.rules.behavioral_engine import BehavioralEngine
+from ml_engine.detection.alert_dispatcher import AlertDispatcher
 from ml_engine.storage import DatabaseManager, FeatureWindowRecord
 
 logger = logging.getLogger("ml_engine.inference.realtime_engine")
@@ -53,32 +53,17 @@ class RealtimeIngestionEngine:
     Thread-safe streaming ingestion engine.
 
     Connects to the Go Agent WebSocket stream, processes events through
-    the sliding window feature extractor, runs ML inference, and passes
-    predictions to the mitigation controller.
-
-    Usage:
-        detector = ThreatDetector()
-        detector.load_artifacts()
-
-        mitigator = MitigationController(dry_run=True)
-
-        engine = RealtimeIngestionEngine(
-            ws_url="ws://localhost:8900/ws",
-            detector=detector,
-            mitigator=mitigator,
-        )
-        engine.start()
-        ...
-        engine.stop()
+    the sliding window feature extractor, runs ML inference, evaluates
+    Falco behavioral rules, and dispatches detection alerts.
     """
 
     def __init__(
         self,
         ws_url: str = AGENT_WS_URL,
         detector: Optional[ThreatDetector] = None,
-        mitigator: Optional[MitigationController] = None,
+        behavioral_engine: Optional[BehavioralEngine] = None,
         window_seconds: float = SLIDING_WINDOW_SECONDS,
-        on_detection_callback: Optional[Callable[[MitigationAction, dict], None]] = None,
+        on_detection_callback: Optional[Callable[[dict], None]] = None,
         db_manager: Optional[DatabaseManager] = None,
     ):
         self.ws_url = ws_url
@@ -87,9 +72,10 @@ class RealtimeIngestionEngine:
 
         # Components
         self.detector = detector or ThreatDetector()
-        self.mitigator = mitigator or MitigationController()
+        self.behavioral_engine = behavioral_engine or BehavioralEngine()
         self.extractor = StreamingExtractor(window_seconds=window_seconds)
         self.db_mgr = db_manager or DatabaseManager()
+        self.dispatcher = AlertDispatcher(db_manager=self.db_mgr)
 
         # Threading & Control
         self._running = False
@@ -255,18 +241,18 @@ class RealtimeIngestionEngine:
     # Event Ingestion & Inference Pipeline
     # ─────────────────────────────────────────────────────────
 
-    def ingest_event(self, event: dict) -> List[MitigationAction]:
+    def ingest_event(self, event: dict) -> List[Dict[str, Any]]:
         """
         Ingest a single telemetry event dictionary.
 
         Can be called directly for testing or batch processing.
-        Returns a list of any MitigationAction decisions produced.
+        Returns a list of any alert dicts produced.
 
         Args:
             event: BPF telemetry event dictionary
 
         Returns:
-            List of MitigationAction objects produced by completed windows.
+            List of alert dictionaries produced by rules or ML model evaluation.
         """
         actions = []
         now = time.time()
@@ -284,7 +270,19 @@ class RealtimeIngestionEngine:
         # Enqueue raw telemetry event into async database batch queue
         self.db_mgr.batch_writer.enqueue(event)
 
-        # Feed event into StreamingExtractor
+        # 1. Evaluate Falco behavioral rules on incoming event
+        rule_matches = self.behavioral_engine.evaluate_event(event)
+        for match in rule_matches:
+            alert = self.dispatcher.dispatch_alert(
+                event=event,
+                threat_type=match["rule_name"],
+                confidence=1.0,
+                detection_source="behavioral_rule",
+                rule_info=match,
+            )
+            actions.append(alert)
+
+        # 2. Feed event into StreamingExtractor for ML sliding window feature extraction
         completed_windows = self.extractor.ingest(event)
         
         # Also check for any expired windows that reached minimum event count
@@ -301,11 +299,11 @@ class RealtimeIngestionEngine:
 
     def _process_feature_window(
         self, pid: int, vector: np.ndarray, metadata: dict
-    ) -> Optional[MitigationAction]:
+    ) -> Optional[Dict[str, Any]]:
         """
         Process a completed 12-dim feature window for a PID:
         1. Run ML inference via ThreatDetector.predict_with_consensus()
-        2. Evaluate via MitigationController.evaluate_and_mitigate()
+        2. Dispatch alert via AlertDispatcher if threat detected
         3. Invoke subscriber callback if provided
         """
         with self._lock:
@@ -349,52 +347,32 @@ class RealtimeIngestionEngine:
         except Exception as err:
             logger.debug("Failed to record feature window to DuckDB: %s", err)
 
-        # Update threat stats & record alert if threat detected
-        # 2. Evaluate mitigation decision
-        action = self.mitigator.evaluate_and_mitigate(
-            pid=pid,
-            threat_result=threat_result,
-            metadata=metadata,
-            xgb_threat_name=xgb_threat,
-        )
-
-        action_taken_str = action.action_taken if action else "LOG_ONLY"
-
-        # Update threat stats & record alert if threat detected
+        # 2. Dispatch ML alert if threat detected
+        alert = None
         if agreed_threat != "BENIGN":
             with self._lock:
                 self._stats["total_threats_detected"] += 1
                 cls_count = self._stats["threats_by_class"].get(agreed_threat, 0)
                 self._stats["threats_by_class"][agreed_threat] = cls_count + 1
 
-            try:
-                from ml_engine.storage import ThreatAlertRecord
-                alert_rec = ThreatAlertRecord(
-                    pid=pid,
-                    comm=str(metadata.get("comm", "")),
-                    exe_path=str(metadata.get("exe_path", "")),
-                    threat_name=agreed_threat,
-                    confidence=float(threat_result.get("confidence", 0.0)),
-                    consensus_agreed=bool(threat_result.get("consensus_agreed", False)),
-                    action_taken=action_taken_str,
-                    rf_threat=rf_threat,
-                    xgb_threat=xgb_threat,
-                    iso_anomaly=bool(threat_result.get("iso_anomaly", False)),
-                )
-                self.db_mgr.sqlite.insert_alert(alert_rec)
-            except Exception as err:
-                logger.debug("Failed to record threat alert to SQLite: %s", err)
+            alert = self.dispatcher.dispatch_alert(
+                event={"pid": pid, "comm": str(metadata.get("comm", "")), "exe_path": str(metadata.get("exe_path", ""))},
+                threat_type=agreed_threat,
+                confidence=float(threat_result.get("confidence", 0.0)),
+                detection_source="ensemble_ml",
+                ml_scores={"rf": rf_threat, "xgb": xgb_threat, "iso_score": float(threat_result.get("iso_score", 0.0))},
+            )
 
         # 3. Notify external subscriber callback (if registered)
-        if self.on_detection_callback and action:
+        if self.on_detection_callback and alert:
             try:
-                self.on_detection_callback(action, threat_result)
+                self.on_detection_callback(alert)
             except Exception as e:
                 logger.error("Subscriber callback failed: %s", e)
 
-        return action
+        return alert
 
-    def flush(self) -> List[MitigationAction]:
+    def flush(self) -> List[Dict[str, Any]]:
         """Flush all active windows in the StreamingExtractor and evaluate."""
         flushed_windows = self.extractor.flush_all()
         actions = []
@@ -413,5 +391,4 @@ class RealtimeIngestionEngine:
         with self._lock:
             stats = dict(self._stats)
             stats["active_pid_windows"] = len(self.extractor.windows)
-            stats["mitigator_stats"] = self.mitigator.get_stats()
             return stats

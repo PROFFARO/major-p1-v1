@@ -29,21 +29,18 @@ router = APIRouter(prefix="/api/v1", tags=["eBPF-ML Security Service"])
 db_manager: Optional[DatabaseManager] = None
 copilot_instance: Optional[LLMSecurityCopilot] = None
 realtime_engine_ref = None
-mitigator_ref = None
 
 
 def set_api_dependencies(
     db_mgr: DatabaseManager,
     copilot: LLMSecurityCopilot,
     engine=None,
-    mitigator=None,
 ):
     """Inject global application dependencies into API routes."""
-    global db_manager, copilot_instance, realtime_engine_ref, mitigator_ref
+    global db_manager, copilot_instance, realtime_engine_ref
     db_manager = db_mgr
     copilot_instance = copilot
     realtime_engine_ref = engine
-    mitigator_ref = mitigator
 
 
 # ─────────────────────────────────────────────────────────────
@@ -53,28 +50,20 @@ def set_api_dependencies(
 @router.get("/health", response_model=HealthStatusResponse)
 def get_health_status():
     """Return health and database connectivity status."""
-    sqlite_mgr = db_manager.sqlite if db_manager else SQLiteWALManager()
-    active_blocks = sqlite_mgr.get_active_blocks()
     return HealthStatusResponse(
         status="ok",
         duckdb_connected=db_manager is not None and db_manager.duckdb is not None,
         sqlite_connected=True,
-        active_blocks_count=len(active_blocks),
+        active_blocks_count=0,
     )
 
 
 @router.get("/metrics/summary", response_model=MetricsSummaryResponse)
 def get_metrics_summary():
-    """Return live system telemetry, throughput rates, threat counts, and active blocks."""
+    """Return live system telemetry, throughput rates, threat counts, and engine status."""
     stats = {}
     if realtime_engine_ref:
         stats = realtime_engine_ref.get_stats()
-
-    active_blocks = []
-    if mitigator_ref:
-        active_blocks = mitigator_ref.get_active_blocks()
-    elif db_manager:
-        active_blocks = db_manager.sqlite.get_active_blocks()
 
     copilot_mode = "ONLINE"
     if copilot_instance:
@@ -86,7 +75,7 @@ def get_metrics_summary():
         active_feature_windows=stats.get("active_pid_windows", 0),
         total_threats_detected=stats.get("total_threats_detected", 0),
         threats_by_class=stats.get("threats_by_class", {}),
-        active_kernel_blocks=len(active_blocks),
+        active_kernel_blocks=0,
         copilot_status=copilot_mode,
     )
 
@@ -101,37 +90,10 @@ def get_alerts(limit: int = Query(50, ge=1, le=500), threat_name: Optional[str] 
 
 @router.get("/audit/logs")
 def get_audit_logs(limit: int = Query(50, ge=1, le=500)):
-    """Query recent LSM kernel mitigation audit logs."""
+    """Query recent telemetry audit logs."""
     sqlite_mgr = db_manager.sqlite if db_manager else SQLiteWALManager()
     logs = sqlite_mgr.get_mitigation_audit_logs(limit=limit)
     return {"audit_logs": logs, "count": len(logs)}
-
-
-@router.get("/blocks/active")
-def get_active_blocks():
-    """List active kernel PID blocklist entries."""
-    if mitigator_ref:
-        blocks = mitigator_ref.get_active_blocks()
-    else:
-        sqlite_mgr = db_manager.sqlite if db_manager else SQLiteWALManager()
-        blocks = sqlite_mgr.get_active_blocks()
-    return {"active_blocks": blocks, "count": len(blocks)}
-
-
-@router.post("/blocks/unblock")
-def unblock_pid(req: UnblockRequest):
-    """Manually unblock a PID via Go Agent REST API and remove from database."""
-    success = False
-    if mitigator_ref:
-        success = mitigator_ref.unblock_pid(req.pid, reason=req.reason)
-    else:
-        sqlite_mgr = db_manager.sqlite if db_manager else SQLiteWALManager()
-        success = sqlite_mgr.remove_active_block(req.pid)
-
-    if not success:
-        raise HTTPException(status_code=404, detail=f"PID {req.pid} not found in active kernel blocklist")
-
-    return {"status": "unblocked", "pid": req.pid, "reason": req.reason}
 
 
 @router.post("/copilot/chat", response_model=CopilotChatResponse)
@@ -140,10 +102,6 @@ def copilot_chat(req: CopilotChatRequest):
     if not copilot_instance:
         raise HTTPException(status_code=503, detail="LLMSecurityCopilot service not initialized")
 
-    active_blocks = []
-    if mitigator_ref:
-        active_blocks = mitigator_ref.get_active_blocks()
-
     audit_history = []
     if db_manager:
         audit_history = db_manager.sqlite.get_mitigation_audit_logs(limit=20)
@@ -151,7 +109,6 @@ def copilot_chat(req: CopilotChatRequest):
     answer = copilot_instance.chat(
         user_query=req.prompt,
         audit_history=audit_history,
-        active_blocks=active_blocks,
     )
 
     # Record chat in SQLite WAL

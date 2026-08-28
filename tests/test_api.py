@@ -27,7 +27,7 @@ class TestFastAPIRoutes(unittest.TestCase):
         cls.duckdb_path = Path(cls.temp_dir) / "test_telemetry.db"
         cls.sqlite_path = Path(cls.temp_dir) / "test_sec_audit.db"
         cls.db_mgr = DatabaseManager(duckdb_path=cls.duckdb_path, sqlite_path=cls.sqlite_path)
-        cls.copilot = LLMSecurityCopilot()
+        cls.copilot = LLMSecurityCopilot(api_key="", base_url="")
         set_api_dependencies(db_mgr=cls.db_mgr, copilot=cls.copilot)
         cls.client = TestClient(app)
 
@@ -75,29 +75,7 @@ class TestFastAPIRoutes(unittest.TestCase):
         self.assertIn("alerts", data)
         self.assertGreater(data["count"], 0)
 
-    def test_active_blocks_and_unblock_endpoints(self):
-        """Test GET /api/v1/blocks/active and POST /api/v1/blocks/unblock."""
-        # Upsert mock block
-        block = ActiveBlockRecord(
-            pid=6666,
-            threat_name="REVERSE_SHELL",
-            is_permanent=False,
-            details="Test block",
-        )
-        self.db_mgr.sqlite.upsert_active_block(block)
 
-        response = self.client.get("/api/v1/blocks/active")
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertGreater(data["count"], 0)
-
-        # Unblock POST request
-        unblock_resp = self.client.post(
-            "/api/v1/blocks/unblock",
-            json={"pid": 6666, "reason": "Analyst verified benign"},
-        )
-        self.assertEqual(unblock_resp.status_code, 200)
-        self.assertEqual(unblock_resp.json()["status"], "unblocked")
 
     def test_copilot_chat_endpoint(self):
         """Test POST /api/v1/copilot/chat."""

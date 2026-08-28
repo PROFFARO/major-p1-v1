@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
 // lsm_enforcer.bpf.c — LSM (Linux Security Module) eBPF hooks for
-//   real-time threat blocking via BPF Hash Map blocklist lookups.
-//   Covers: binary execution, file access, credential changes,
-//   socket operations, memory protection, and kernel module loading.
+//   real-time security monitoring and threat auditing across
+//   binary execution, file access, credential changes, socket operations,
+//   memory protection, and kernel module loading.
 
 #include "../include/vmlinux.h"
 #include "../include/bpf_helpers.h"
@@ -11,25 +11,9 @@
 
 char LICENSE[] SEC("license") = "GPL";
 
-/* ───── Blocklist Maps (written by user-space feedback loop) ───── */
+/* ───── Ring Buffer & Scratch Maps for Telemetry Auditing ───── */
 
-// PID-based blocklist: key = PID, value = block_rule_t
-struct {
-  __uint(type, BPF_MAP_TYPE_HASH);
-  __uint(max_entries, 10240);
-  __type(key, u32);
-  __type(value, struct block_rule_t);
-} pid_blocklist SEC(".maps");
-
-// IP-based blocklist: key = IPv4 address (u32), value = block_rule_t
-struct {
-  __uint(type, BPF_MAP_TYPE_HASH);
-  __uint(max_entries, 10240);
-  __type(key, u32);
-  __type(value, struct block_rule_t);
-} ip_blocklist SEC(".maps");
-
-// Ring buffer for logging enforcement actions to user-space
+// Ring buffer for logging LSM security events to user-space
 struct {
   __uint(type, BPF_MAP_TYPE_RINGBUF);
   __uint(max_entries, 1 << 22); // 4 MB
@@ -72,26 +56,12 @@ static __always_inline void lsm_submit(struct event_t *e) {
   bpf_ringbuf_submit(out, 0);
 }
 
-// Check if the current PID is blocklisted. Returns -EPERM if blocked.
-static __always_inline int check_pid_blocklist(void) {
-  u32 pid = (u32)bpf_get_current_pid_tgid();
-  struct block_rule_t *rule = bpf_map_lookup_elem(&pid_blocklist, &pid);
-  if (rule && rule->action == ACTION_BLOCK) {
-    __sync_fetch_and_add(&rule->hit_count, 1);
-    return -1; // will be returned as -EPERM
-  }
-  return 0;
-}
-
 /* ════════════════════════════════════════════════════════════
    1. BINARY EXECUTION CONTROL
    ════════════════════════════════════════════════════════════ */
 
 SEC("lsm/bprm_check_security")
 int BPF_PROG(lsm_bprm_check, struct linux_binprm *bprm) {
-  if (check_pid_blocklist())
-    return -EPERM;
-
   struct event_t *e = lsm_get_event();
   if (!e)
     return 0;
@@ -114,9 +84,6 @@ int BPF_PROG(lsm_bprm_check, struct linux_binprm *bprm) {
 
 SEC("lsm/file_open")
 int BPF_PROG(lsm_file_open, struct file *file) {
-  if (check_pid_blocklist())
-    return -EPERM;
-
   struct event_t *e = lsm_get_event();
   if (!e)
     return 0;
@@ -140,8 +107,6 @@ int BPF_PROG(lsm_file_open, struct file *file) {
 
 SEC("lsm/file_permission")
 int BPF_PROG(lsm_file_permission, struct file *file, int mask) {
-  if (check_pid_blocklist())
-    return -EPERM;
   // Log write operations (mask & MAY_WRITE == 2)
   if (!(mask & 2))
     return 0;
@@ -163,9 +128,6 @@ int BPF_PROG(lsm_file_permission, struct file *file, int mask) {
 
 SEC("lsm/path_unlink")
 int BPF_PROG(lsm_path_unlink, const struct path *dir, struct dentry *dentry) {
-  if (check_pid_blocklist())
-    return -EPERM;
-
   struct event_t *e = lsm_get_event();
   if (!e)
     return 0;
@@ -185,9 +147,6 @@ SEC("lsm/path_rename")
 int BPF_PROG(lsm_path_rename, const struct path *old_dir,
              struct dentry *old_dentry, const struct path *new_dir,
              struct dentry *new_dentry, unsigned int flags) {
-  if (check_pid_blocklist())
-    return -EPERM;
-
   struct event_t *e = lsm_get_event();
   if (!e)
     return 0;
@@ -210,9 +169,6 @@ int BPF_PROG(lsm_path_rename, const struct path *old_dir,
 SEC("lsm/cred_prepare")
 int BPF_PROG(lsm_cred_prepare, struct cred *new_cred,
              const struct cred *old_cred, gfp_t gfp) {
-  if (check_pid_blocklist())
-    return -EPERM;
-
   struct event_t *e = lsm_get_event();
   if (!e)
     return 0;
@@ -226,9 +182,6 @@ int BPF_PROG(lsm_cred_prepare, struct cred *new_cred,
 SEC("lsm/task_fix_setuid")
 int BPF_PROG(lsm_task_fix_setuid, struct cred *new_cred,
              const struct cred *old_cred, int flags) {
-  if (check_pid_blocklist())
-    return -EPERM;
-
   struct event_t *e = lsm_get_event();
   if (!e)
     return 0;
@@ -247,9 +200,6 @@ int BPF_PROG(lsm_task_fix_setuid, struct cred *new_cred,
 SEC("lsm/socket_connect")
 int BPF_PROG(lsm_socket_connect, struct socket *sock, struct sockaddr *address,
              int addrlen) {
-  if (check_pid_blocklist())
-    return -EPERM;
-
   struct event_t *e = lsm_get_event();
   if (!e)
     return 0;
@@ -263,14 +213,6 @@ int BPF_PROG(lsm_socket_connect, struct socket *sock, struct sockaddr *address,
     struct sockaddr_in *sin = (struct sockaddr_in *)address;
     bpf_probe_read_kernel(&e->dst_ip, sizeof(e->dst_ip), &sin->sin_addr);
     bpf_probe_read_kernel(&e->dst_port, sizeof(e->dst_port), &sin->sin_port);
-
-    // Check IP blocklist
-    struct block_rule_t *rule = bpf_map_lookup_elem(&ip_blocklist, &e->dst_ip);
-    if (rule && rule->action == ACTION_BLOCK) {
-      __sync_fetch_and_add(&rule->hit_count, 1);
-      lsm_submit(e);
-      return -EPERM;
-    }
   }
 
   lsm_submit(e);
@@ -280,9 +222,6 @@ int BPF_PROG(lsm_socket_connect, struct socket *sock, struct sockaddr *address,
 SEC("lsm/socket_bind")
 int BPF_PROG(lsm_socket_bind, struct socket *sock, struct sockaddr *address,
              int addrlen) {
-  if (check_pid_blocklist())
-    return -EPERM;
-
   struct event_t *e = lsm_get_event();
   if (!e)
     return 0;
@@ -303,9 +242,6 @@ int BPF_PROG(lsm_socket_bind, struct socket *sock, struct sockaddr *address,
 
 SEC("lsm/socket_accept")
 int BPF_PROG(lsm_socket_accept, struct socket *sock, struct socket *newsock) {
-  if (check_pid_blocklist())
-    return -EPERM;
-
   struct event_t *e = lsm_get_event();
   if (!e)
     return 0;
@@ -319,22 +255,17 @@ int BPF_PROG(lsm_socket_accept, struct socket *sock, struct socket *newsock) {
 SEC("lsm/socket_sendmsg")
 int BPF_PROG(lsm_socket_sendmsg, struct socket *sock, struct msghdr *msg,
              int size) {
-  if (check_pid_blocklist())
-    return -EPERM;
-  return 0; // log only for blocklisted; pass-through for normal
+  return 0; // pass-through telemetry
 }
 
 /* ════════════════════════════════════════════════════════════
-   6. MEMORY PROTECTION (shellcode injection prevention)
+   6. MEMORY PROTECTION (shellcode injection monitoring)
    ════════════════════════════════════════════════════════════ */
 
 SEC("lsm/file_mprotect")
 int BPF_PROG(lsm_file_mprotect, struct vm_area_struct *vma,
              unsigned long reqprot, unsigned long prot) {
-  if (check_pid_blocklist())
-    return -EPERM;
-
-  // Flag W+X (write+execute) memory — a shellcode injection indicator
+  // Flag W+X (write+execute) memory — shellcode injection indicator
   if ((prot & 0x4) && (prot & 0x2)) { // PROT_EXEC | PROT_WRITE
     struct event_t *e = lsm_get_event();
     if (!e)
@@ -348,15 +279,12 @@ int BPF_PROG(lsm_file_mprotect, struct vm_area_struct *vma,
 }
 
 /* ════════════════════════════════════════════════════════════
-   7. KERNEL MODULE LOADING CONTROL
+   7. KERNEL MODULE LOADING AUDIT
    ════════════════════════════════════════════════════════════ */
 
 SEC("lsm/kernel_read_file")
 int BPF_PROG(lsm_kernel_read_file, struct file *file,
              enum kernel_read_file_id id, bool contents) {
-  if (check_pid_blocklist())
-    return -EPERM;
-
   struct event_t *e = lsm_get_event();
   if (!e)
     return 0;

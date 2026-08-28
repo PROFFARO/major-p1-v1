@@ -1,27 +1,26 @@
 """
 Prompt templates for the Interactive LLM Security Analyst Copilot.
 
-Provides structured prompts directing Google Gemini to behave as a Senior SOC
-Security Analyst & eBPF Kernel Forensics Specialist.
+Provides structured prompts directing Google Gemini / LLMs to behave as a Senior SOC
+Security Analyst & eBPF Kernel Forensics Specialist for telemetry-first observability.
 """
 
 # System Instruction defining the LLM Analyst persona
 SOC_SYSTEM_INSTRUCTION = """
 You are Antigravity SOC Analyst, an elite Principal Security Analyst & Linux Kernel
 Forensic Specialist. You analyze eBPF kernel-level telemetry events, multi-model machine
-learning predictions (Random Forest, XGBoost, Isolation Forest), and automated LSM
-enforcement actions.
+learning predictions (Random Forest, XGBoost, Isolation Forest), and Falco-style behavioral rules.
 
 Your responses must be:
 1. Highly technical, precise, and actionable for Security Operations Center (SOC) engineers.
 2. Structured in clean GitHub-flavored Markdown.
-3. Focused on root-cause analysis, threat indicators, and immediate kernel/system containment.
+3. Focused on non-intrusive threat detection, root-cause diagnosis, MITRE ATT&CK alignment, and forensic investigation.
 4. Professional, authoritative, and helpful.
 """
 
 # Prompt for synthesizing a single threat detection into a full SOC Incident Report
 THREAT_ANALYSIS_PROMPT = """
-Analyze the following eBPF Threat Mitigation Event and synthesize a detailed SOC Incident Report.
+Analyze the following eBPF Security Observability Event and synthesize a detailed SOC Incident Report.
 
 ### Incident Metadata:
 - **Process ID (PID)**: {pid}
@@ -37,9 +36,7 @@ Analyze the following eBPF Threat Mitigation Event and synthesize a detailed SOC
 - **XGBoost Prediction**: `{xgb_threat_name}`
 - **Isolation Forest Score**: `{anomaly_score}` (Anomaly Flag: `{is_anomaly}`)
 - **Classifier Confidence**: `{confidence:.2%}`
-- **Action Taken**: `{action_taken}`
-- **Permanent Block**: `{is_permanent}`
-- **Reason**: {reason}
+- **Detection Source**: `{action_taken}`
 
 ### 12-Dimensional Feature Vector Snapshot:
 - Syscall Rate: {syscall_rate:.2f} /sec
@@ -57,16 +54,15 @@ Analyze the following eBPF Threat Mitigation Event and synthesize a detailed SOC
 
 ---
 Please provide a comprehensive **SOC Incident Report** in Markdown format containing:
-1. **Executive Summary**: High-level overview of the incident.
+1. **Executive Summary**: High-level overview of the detected threat activity.
 2. **Technical Threat Breakdown**: Analysis of the 12-dimensional feature vector anomalies.
-3. **Probable Attack Vector**: Likely TTPs (MITRE ATT&CK alignment if applicable).
-4. **Enforcement Assessment**: Evaluation of the LSM block decision.
-5. **Immediate Recommendations**: Top 3 tactical containment steps.
+3. **Probable Attack Vector**: Likely TTPs (MITRE ATT&CK alignment).
+4. **Forensic Recommendations**: Recommended manual containment steps for SOC responders.
 """
 
-# Prompt for generating exact containment shell commands
+# Prompt for generating exact forensic containment shell commands
 REMEDIATION_PROMPT = """
-Provide immediate containment commands and forensic remediation steps for the following threat:
+Provide forensic containment guidance and investigation commands for the following threat:
 
 ### Threat Context:
 - **PID**: {pid}
@@ -77,11 +73,10 @@ Provide immediate containment commands and forensic remediation steps for the fo
 - **Confidence**: `{confidence:.2%}`
 
 ---
-Generate a step-by-step **Remediation & Containment Guide** with copy-paste Linux shell commands:
-1. **Process Containment**: Commands to freeze, trace, or terminate PID {pid}.
-2. **Network Quarantine**: Commands to block destination IP `{dst_ip}` via `iptables` or `ip route`.
-3. **Forensic Artifact Preservation**: Commands to inspect file descriptors, environment variables, memory map, and `/proc/{pid}`.
-4. **Long-Term Hardening**: System/AppArmor/SELinux/eBPF policy changes to prevent recurrence.
+Generate a step-by-step **Forensic & Investigation Guide** with copy-paste Linux shell commands:
+1. **Process Inspection**: Commands to inspect process descriptors, memory map, and `/proc/{pid}`.
+2. **Network Investigation**: Commands to analyze network connections and packet captures for destination IP `{dst_ip}`.
+3. **Forensic Artifact Preservation**: Commands to preserve dump state for analysis.
 """
 
 # Prompt for interactive conversational Q&A with analysts
@@ -89,13 +84,7 @@ ANALYST_CHAT_PROMPT = """
 An analyst is asking a question about the eBPF Security Agent state.
 
 ### Active System Context:
-- **Active PID/IP Blocks**: {active_blocks_count}
-- **Total Evaluated Events**: {total_evaluations}
-- **Total Threat Blocks**: {total_blocked}
-- **Active Block Details**:
-{active_blocks_json}
-
-- **Recent Audit Log Snapshot**:
+- **Recent Telemetry & Alert Summary**:
 {audit_history_json}
 
 ---

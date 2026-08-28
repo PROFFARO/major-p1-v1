@@ -58,15 +58,7 @@ struct udphdr_t {
     u16 check;
 } __attribute__((packed));
 
-/* ───── Maps ───── */
-
-// IP blocklist shared with lsm_enforcer (same key type)
-struct {
-    __uint(type, BPF_MAP_TYPE_HASH);
-    __uint(max_entries, 10240);
-    __type(key, u32);
-    __type(value, struct block_rule_t);
-} net_ip_blocklist SEC(".maps");
+// ───── Maps ─────
 
 // Ring buffer for network telemetry events
 struct {
@@ -113,7 +105,7 @@ static __always_inline void net_submit_event(u32 src_ip, u32 dst_ip,
 }
 
 /* ════════════════════════════════════════════════════════════
-   TC INGRESS CLASSIFIER  (inbound traffic)
+   TC INGRESS CLASSIFIER  (inbound traffic telemetry)
    ════════════════════════════════════════════════════════════ */
 
 SEC("tc")
@@ -139,14 +131,6 @@ int tc_ingress(struct __sk_buff *skb)
     u32 src_ip = ip->saddr;
     u32 dst_ip = ip->daddr;
     u8  proto  = ip->protocol;
-
-    // ── IP Blocklist Check (fast-path drop) ──
-    struct block_rule_t *rule = bpf_map_lookup_elem(&net_ip_blocklist,
-                                                     &src_ip);
-    if (rule && rule->action == ACTION_BLOCK) {
-        __sync_fetch_and_add(&rule->hit_count, 1);
-        return TC_ACT_SHOT; // DROP packet
-    }
 
     // ── Per-IP Packet Rate Counter (DDoS heuristic) ──
     u64 *cnt = bpf_map_lookup_elem(&pkt_counter, &src_ip);
@@ -237,14 +221,6 @@ int tc_egress(struct __sk_buff *skb)
 
     u32 dst_ip = ip->daddr;
     u8  proto  = ip->protocol;
-
-    // ── Outbound IP blocklist (C2 server blocking) ──
-    struct block_rule_t *rule = bpf_map_lookup_elem(&net_ip_blocklist,
-                                                     &dst_ip);
-    if (rule && rule->action == ACTION_BLOCK) {
-        __sync_fetch_and_add(&rule->hit_count, 1);
-        return TC_ACT_SHOT;
-    }
 
     u16 src_port = 0, dst_port = 0;
 

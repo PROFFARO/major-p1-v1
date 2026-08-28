@@ -63,6 +63,18 @@ func (es *EventStream) Start(ctx context.Context) {
 		go es.readRingBuf(ctx, es.probes.NetEvents, "net_filter")
 	}
 
+	// ssl_tracer ring buffer: "ssl_events"
+	if es.probes.SSLEvents != nil {
+		es.wg.Add(1)
+		go es.readRingBuf(ctx, es.probes.SSLEvents, "ssl_tracer")
+	}
+
+	// perf_profiler ring buffer: "perf_events"
+	if es.probes.PerfEvents != nil {
+		es.wg.Add(1)
+		go es.readRingBuf(ctx, es.probes.PerfEvents, "perf_profiler")
+	}
+
 	// Background closer: waits for all readers to exit, then closes the channel
 	go func() {
 		es.wg.Wait()

@@ -1,13 +1,14 @@
 """
 Full-Stack End-to-End Pipeline Integration Test Runner.
 
-Verifies the entire eBPF threat streaming & defense lifecycle:
+Verifies the entire eBPF threat streaming & security observability lifecycle:
     1. BPF JSON Telemetry Event Stream
     2. RealtimeIngestionEngine (WebSocket Worker)
     3. StreamingExtractor (12-Dim Feature Extraction & Windowing)
     4. ThreatDetector (RF + XGBoost + Isolation Forest Consensus)
-    5. MitigationController (6 Safety Layers & LSM Kernel Action)
-    6. LLMSecurityCopilot (SOC Incident Report & Remediation Command Synthesis)
+    5. BehavioralEngine (Falco-style rule evaluation)
+    6. AlertDispatcher (Alert logging & persistence)
+    7. LLMSecurityCopilot (SOC Incident Report & Remediation Command Synthesis)
 """
 
 import json
@@ -23,8 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import shutil
 from ml_engine.models.detector import ThreatDetector
-from ml_engine.feedback.mitigator import MitigationController
-from ml_engine.feedback.actions import AuditLogger
+from ml_engine.rules.behavioral_engine import BehavioralEngine
+from ml_engine.detection.alert_dispatcher import AlertDispatcher
 from ml_engine.inference.realtime_engine import RealtimeIngestionEngine
 from ml_engine.llm_analyst.copilot import LLMSecurityCopilot
 from ml_engine.storage import DatabaseManager
@@ -42,7 +43,6 @@ def generate_e2e_event_stream(pid: int, comm: str, exe_path: str, threat_type: s
     for i in range(num_events):
         ts = base_ns + int(i * 0.35 * 1e9)  # 0.35s step over ~5.25 seconds
 
-        # Tailor event characteristics based on threat type
         if threat_type == "RANSOMWARE":
             syscall_id = 257 if i % 2 == 0 else 87  # openat / unlink
             file_path = f"/home/user/documents/file_{i}.crypto"
@@ -83,30 +83,23 @@ def generate_e2e_event_stream(pid: int, comm: str, exe_path: str, threat_type: s
 # ─────────────────────────────────────────────────────────────
 
 class TestFullPipelineE2E(unittest.TestCase):
-    """Full-stack integration test suite covering end-to-end telemetry to mitigation & LLM report."""
+    """Full-stack integration test suite covering end-to-end telemetry to rule/ML detection & LLM report."""
 
     def setUp(self):
-        # 1. Temporary Audit Log & Isolated DatabaseManager
+        # 1. Temporary Isolated DatabaseManager
         self.temp_dir = tempfile.mkdtemp(prefix="ebpf_test_e2e_")
         self.duckdb_path = Path(self.temp_dir) / "test_telemetry.db"
         self.sqlite_path = Path(self.temp_dir) / "test_sec_audit.db"
         self.db_mgr = DatabaseManager(duckdb_path=self.duckdb_path, sqlite_path=self.sqlite_path)
-
-        self.tmp_audit = tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False)
-        self.tmp_audit.close()
-        self.audit_logger = AuditLogger(log_path=Path(self.tmp_audit.name))
 
         # 2. Threat Detector (Loads trained joblib artifacts)
         self.detector = ThreatDetector()
         if not self.detector.loaded:
             self._setup_mock_detector()
 
-        # 3. Mitigation Controller (Dry-run mode for test safety)
-        self.mitigator = MitigationController(
-            dry_run=True,
-            audit_logger=self.audit_logger,
-            enable_background_sweep=False,
-        )
+        # 3. Behavioral Engine & Alert Dispatcher
+        self.behavioral_engine = BehavioralEngine()
+        self.dispatcher = AlertDispatcher(db_manager=self.db_mgr)
 
         # 4. LLM Analyst Copilot (Offline mode for fast reproducible testing)
         self.copilot = LLMSecurityCopilot(api_key="", base_url="")
@@ -114,23 +107,22 @@ class TestFullPipelineE2E(unittest.TestCase):
         # 5. Callback sink to capture generated SOC reports
         self.captured_reports = []
 
-        def on_detection(action, threat_res):
-            # Synthesize LLM SOC report on threat detection
+        def on_detection(alert):
             metadata = {
-                "pid": action.pid,
-                "comm": threat_res.get("comm", "unknown"),
-                "exe_path": threat_res.get("exe_path", "/tmp/malware"),
+                "pid": alert.get("pid", 0),
+                "comm": alert.get("comm", "unknown"),
+                "exe_path": alert.get("exe_path", "/tmp/malware"),
                 "parent_comm": "bash",
-                "dst_ip": threat_res.get("dst_ip", "0.0.0.0"),
+                "dst_ip": alert.get("dst_ip", "0.0.0.0"),
             }
-            report = self.copilot.analyze_threat(action.to_dict(), metadata)
-            remediation = self.copilot.generate_remediation(action.to_dict(), metadata)
+            report = self.copilot.analyze_threat(alert, metadata)
+            remediation = self.copilot.generate_remediation(alert, metadata)
             self.captured_reports.append((report, remediation))
 
         # 6. Realtime Ingestion Engine
         self.engine = RealtimeIngestionEngine(
             detector=self.detector,
-            mitigator=self.mitigator,
+            behavioral_engine=self.behavioral_engine,
             db_manager=self.db_mgr,
             on_detection_callback=on_detection,
             window_seconds=5.0,
@@ -156,7 +148,7 @@ class TestFullPipelineE2E(unittest.TestCase):
         }
 
     def test_e2e_ransomware_pipeline_flow(self):
-        """Test full pipeline flow for Ransomware attack detection, mitigation, and LLM report."""
+        """Test full pipeline flow for Ransomware attack detection and LLM report."""
         stream = generate_e2e_event_stream(
             pid=90001,
             comm="lockbit_encryptor",
@@ -170,51 +162,26 @@ class TestFullPipelineE2E(unittest.TestCase):
             actions.extend(self.engine.ingest_event(evt))
         actions.extend(self.engine.flush())
 
-        # 1. Verify detection and mitigation trigger
+        # 1. Verify detection triggers
         self.assertGreater(len(actions), 0)
         action = actions[0]
-        self.assertEqual(action.pid, 90001)
+        self.assertEqual(action["pid"], 90001)
 
-        # 2. Verify audit logger recorded the decision
-        recorded_actions = self.audit_logger.read_all()
-        self.assertGreater(len(recorded_actions), 0)
-        self.assertEqual(recorded_actions[0].pid, 90001)
+        # 2. Verify alert recorded in SQLite database
+        recorded_alerts = self.db_mgr.sqlite.get_alerts(limit=10)
+        self.assertGreater(len(recorded_alerts), 0)
+        self.assertEqual(recorded_alerts[0]["pid"], 90001)
 
         # 3. Verify LLM Copilot report generation
         self.assertGreater(len(self.captured_reports), 0)
         report, remediation = self.captured_reports[0]
         self.assertIn("SOC Incident Report", report)
         self.assertIn("90001", report)
-        self.assertIn("Containment & Remediation Guide", remediation)
-        self.assertIn("kill -9 90001", remediation)
-
-    def test_e2e_protected_pid_safety(self):
-        """Verify protected PIDs (systemd PID 1) are never blocked even under attack noise."""
-        stream = generate_e2e_event_stream(
-            pid=1,
-            comm="systemd",
-            exe_path="/usr/lib/systemd/systemd",
-            threat_type="RANSOMWARE",
-            num_events=15,
-        )
-
-        actions = []
-        for evt in stream:
-            actions.extend(self.engine.ingest_event(evt))
-        actions.extend(self.engine.flush())
-
-        # PID 1 must produce action_taken == "SKIP_PROTECTED"
-        self.assertGreater(len(actions), 0)
-        self.assertEqual(actions[0].action_taken, "SKIP_PROTECTED")
+        self.assertIn("Containment", remediation)
 
     def tearDown(self):
         self.db_mgr.stop()
         shutil.rmtree(self.temp_dir, ignore_errors=True)
-        if Path(self.tmp_audit.name).exists():
-            try:
-                Path(self.tmp_audit.name).unlink()
-            except Exception:
-                pass
 
 
 if __name__ == "__main__":

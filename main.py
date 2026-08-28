@@ -49,11 +49,11 @@ from ml_engine.config import (
     LOGS_DIR,
 )
 from ml_engine.models.detector import ThreatDetector
-from ml_engine.feedback.mitigator import MitigationController
-from ml_engine.feedback.actions import AuditLogger
+from ml_engine.rules.behavioral_engine import BehavioralEngine
+from ml_engine.detection.alert_dispatcher import AlertDispatcher
 from ml_engine.inference.realtime_engine import RealtimeIngestionEngine
 from ml_engine.llm_analyst.copilot import LLMSecurityCopilot
-from ml_engine.storage import DatabaseManager, ThreatAlertRecord
+from ml_engine.storage import DatabaseManager
 from ml_engine.api import APIServerRunner
 
 logger = logging.getLogger("system.orchestrator")
@@ -63,7 +63,7 @@ class UnifiedSystemOrchestrator:
     """
     Centralized controller for managing:
       1. Go eBPF Agent Subprocess (kernel probe loader & ring buffer broadcaster)
-      2. Python Streaming ML Inference Engine & Feature Extractor
+      2. Python Streaming ML Inference Engine & Falco Behavioral Rules
       3. DuckDB Columnar & SQLite WAL Database Managers
       4. FastAPI REST Server & Dashboard API
       5. Interactive Analyst Copilot CLI Console
@@ -91,7 +91,7 @@ class UnifiedSystemOrchestrator:
         self.agent_process: Optional[subprocess.Popen] = None
         self.latest_reports: List[Dict[str, Any]] = []
 
-        logger.info("Initializing Unified eBPF-ML Security System...")
+        logger.info("Initializing Unified eBPF Telemetry & Security Engine...")
 
         # Ensure log directory and files are accessible
         for log_file in LOGS_DIR.glob("*"):
@@ -100,24 +100,18 @@ class UnifiedSystemOrchestrator:
             except Exception:
                 pass
 
-        # 1. Audit Logger & Database Manager
-        self.audit_logger = AuditLogger()
+        # 1. Database Manager & Alert Dispatcher
         self.db_mgr = DatabaseManager()
+        self.dispatcher = AlertDispatcher(db_manager=self.db_mgr)
 
-        # 2. ML Threat Detector
+        # 2. ML Threat Detector & Behavioral Engine
         self.detector = ThreatDetector()
         if not self.detector.loaded:
-            logger.warning("ML model joblib artifacts missing or unreadable! Operating in rule-based fallback mode.")
+            logger.warning("ML model joblib artifacts missing! Operating in Falco rule-based mode.")
 
-        # 3. LSM Mitigation Controller
-        self.mitigator = MitigationController(
-            agent_base_url=f"http://localhost{agent_listen if agent_listen.startswith(':') else ':' + agent_listen}",
-            dry_run=self.dry_run,
-            audit_logger=self.audit_logger,
-            enable_background_sweep=True,
-        )
+        self.behavioral_engine = BehavioralEngine()
 
-        # 4. Universal LLM Security Analyst Copilot
+        # 3. Universal LLM Security Analyst Copilot
         self.copilot = LLMSecurityCopilot(
             api_key=LLM_API_KEY,
             base_url=LLM_BASE_URL,
@@ -125,18 +119,18 @@ class UnifiedSystemOrchestrator:
             provider=LLM_PROVIDER,
         )
 
-        # 5. Realtime Ingestion Engine
+        # 4. Realtime Ingestion Engine
         ws_url = f"ws://localhost{agent_listen if agent_listen.startswith(':') else ':' + agent_listen}/ws"
         self.engine = RealtimeIngestionEngine(
             ws_url=ws_url,
             detector=self.detector,
-            mitigator=self.mitigator,
+            behavioral_engine=self.behavioral_engine,
             on_detection_callback=self._handle_live_detection,
             window_seconds=5.0,
             db_manager=self.db_mgr,
         )
 
-        # 6. FastAPI REST Server Runner
+        # 5. FastAPI REST Server Runner
         self.api_server = None
         if not self.no_api:
             self.api_server = APIServerRunner(
@@ -145,62 +139,41 @@ class UnifiedSystemOrchestrator:
                 db_mgr=self.db_mgr,
                 copilot=self.copilot,
                 engine=self.engine,
-                mitigator=self.mitigator,
             )
 
-    def _handle_live_detection(self, action, threat_res: Dict[str, Any]):
-        """Callback triggered when ML consensus detects a threat."""
-        pid = action.pid
-        threat_name = action.threat_name
-        action_taken = action.action_taken
+    def _handle_live_detection(self, alert: Dict[str, Any]):
+        """Callback triggered when an ML anomaly or behavioral rule detects a threat."""
+        pid = alert.get("pid", 0)
+        threat_name = alert.get("threat_name", alert.get("rule_name", "UNKNOWN"))
+        source = alert.get("detection_source", "alert_dispatcher")
 
-        # Only trigger SOC Incident Synthesis for real threats, not benign system activity
         if threat_name == "BENIGN":
             return
 
         logger.critical(
-            "🚨 LIVE THREAT DETECTED — PID: %d | Threat: %s | Action: %s | Conf: %.2f%%",
+            "🚨 LIVE THREAT DETECTED — PID: %d | Threat: %s | Source: %s | Conf: %.2f%%",
             pid,
             threat_name,
-            action_taken,
-            action.confidence * 100.0,
+            source,
+            float(alert.get("confidence", 1.0)) * 100.0,
         )
 
         metadata = {
             "pid": pid,
-            "comm": threat_res.get("comm", "unknown"),
-            "exe_path": threat_res.get("exe_path", "/tmp/unknown"),
-            "parent_comm": threat_res.get("parent_comm", "bash"),
-            "dst_ip": threat_res.get("dst_ip", "0.0.0.0"),
+            "comm": alert.get("comm", "unknown"),
+            "exe_path": alert.get("exe_path", "/tmp/unknown"),
+            "parent_comm": alert.get("parent_comm", "bash"),
+            "dst_ip": alert.get("dst_ip", "0.0.0.0"),
         }
 
-        # Persist alert record to SQLite threat_alerts table
-        try:
-            alert_rec = ThreatAlertRecord(
-                pid=pid,
-                comm=metadata["comm"],
-                exe_path=metadata["exe_path"],
-                threat_name=threat_name,
-                confidence=action.confidence,
-                consensus_agreed=threat_res.get("consensus", True),
-                action_taken=action_taken,
-                rf_threat=action.rf_threat_name,
-                xgb_threat=action.xgb_threat_name,
-                iso_anomaly=action.is_anomaly,
-                feature_summary=threat_res.get("feature_summary"),
-            )
-            self.db_mgr.sqlite.insert_alert(alert_rec)
-        except Exception as alert_err:
-            logger.warning("Failed to store threat alert to SQLite: %s", alert_err)
-
-        report = self.copilot.analyze_threat(action.to_dict(), metadata)
-        remediation = self.copilot.generate_remediation(action.to_dict(), metadata)
+        report = self.copilot.analyze_threat(alert, metadata)
+        remediation = self.copilot.generate_remediation(alert, metadata)
 
         report_entry = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "pid": pid,
             "threat_name": threat_name,
-            "action_taken": action_taken,
+            "action_taken": source,
             "soc_report": report,
             "remediation_guide": remediation,
         }
@@ -329,7 +302,7 @@ class UnifiedSystemOrchestrator:
             pass
 
         try:
-            self.mitigator.stop()
+            self.engine.stop()
         except Exception:
             pass
 
@@ -346,24 +319,24 @@ class UnifiedSystemOrchestrator:
                     pass
             logger.info("Go eBPF Agent process terminated.")
 
-        logger.info("✓ eBPF-ML Security System shut down cleanly.")
+        logger.info("✓ eBPF Telemetry & Security Engine shut down cleanly.")
 
     def run_interactive_cli(self):
         """Interactive Professional Command Center for SOC Analysts."""
         agent_status = "ONLINE" if (self.agent_process and self.agent_process.poll() is None) else ("DISABLED" if self.no_agent else "UNKNOWN")
-        models_status = "LOADED (RF + XGB + ISO)" if self.detector.loaded else "FALLBACK (Rule-Based)"
+        models_status = "LOADED (RF + XGB + ISO)" if self.detector.loaded else "FALLBACK (Falco Rules Only)"
         copilot_status = "ONLINE" if self.copilot.is_available() else "OFFLINE"
 
         print("\n" + "═" * 80)
-        print("   🛡️   eBPF-ML SECURITY SYSTEM — CENTRALIZED COMMAND CENTER")
+        print("   🛡️   eBPF TELEMETRY & THREAT OBSERVABILITY ENGINE — COMMAND CENTER")
         print("═" * 80)
-        print(f" • Mode                  : {'DRY-RUN (Log Only)' if self.dry_run else 'ACTIVE LSM KERNEL ENFORCEMENT'}")
+        print(f" • Mode                  : NON-INTRUSIVE TELEMETRY OBSERVABILITY & AUDIT")
         print(f" • Go eBPF Agent        : {agent_status} ({self.agent_listen})")
-        print(f" • ML Detection Models  : {models_status}")
+        print(f" • ML & Behavioral Rules: {models_status}")
         print(f" • Analyst Copilot      : {copilot_status} ({self.copilot.provider.upper()}: {self.copilot.model_name})")
         print(f" • FastAPI REST Server   : {'ONLINE' if self.api_server else 'DISABLED'} (http://localhost:{self.api_port})")
         print(" ═" * 80)
-        print(" Catalog: 'status', 'blocks', 'unblock <PID>', 'alerts [N]', 'audit [N]', 'query <SQL>', 'chat <prompt>', 'reports', 'help', 'exit'")
+        print(" Catalog: 'status', 'alerts [N]', 'audit [N]', 'query <SQL>', 'chat <prompt>', 'reports', 'help', 'exit'")
         print(" ═" * 80 + "\n")
 
         while self.running:
@@ -377,18 +350,6 @@ class UnifiedSystemOrchestrator:
 
                 elif cmd.lower() == "status":
                     stats = self.engine.get_stats()
-                    mem_blocks = self.mitigator.get_active_blocks()
-                    db_blocks = self.db_mgr.sqlite.get_active_blocks()
-                    agent_blocks = []
-                    if self.agent_process:
-                        try:
-                            req = urllib.request.Request(f"http://localhost:{self.listen_agent.split(':')[-1]}/api/blocklist")
-                            with urllib.request.urlopen(req, timeout=2) as resp:
-                                agent_blocks = json.loads(resp.read().decode('utf-8'))
-                        except Exception:
-                            pass
-                    
-                    active_blocks_count = max(len(mem_blocks), len(db_blocks), len(agent_blocks))
                     db_alerts = self.db_mgr.sqlite.get_alerts(limit=10000)
                     total_threats = max(stats.get('total_threats_detected', 0), len(db_alerts))
 
@@ -397,46 +358,7 @@ class UnifiedSystemOrchestrator:
                     print(f"   • Telemetry Throughput   : {stats.get('events_per_second', 0.0):.1f} EPS")
                     print(f"   • Active Feature Windows : {stats.get('active_pid_windows', 0)}")
                     print(f"   • Total Threats Detected : {total_threats}")
-                    print(f"   • Active Kernel Blocks   : {active_blocks_count}")
                     print(f"   • Go Agent Process PID   : {self.agent_process.pid if self.agent_process else 'N/A'}\n")
-
-                elif cmd.lower() == "blocks":
-                    blocks = self.mitigator.get_active_blocks()
-                    db_blocks = self.db_mgr.sqlite.get_active_blocks()
-                    
-                    # Try querying live eBPF BPF LSM Kernel Map via Go Agent REST API
-                    agent_blocks = []
-                    if self.agent_process:
-                        try:
-                            req = urllib.request.Request(f"http://localhost:{self.listen_agent.split(':')[-1]}/api/blocklist")
-                            with urllib.request.urlopen(req, timeout=2) as resp:
-                                agent_blocks = json.loads(resp.read().decode('utf-8'))
-                        except Exception:
-                            pass
-
-                    total_entries = max(len(blocks), len(db_blocks), len(agent_blocks))
-                    print(f"\n🔒 Active eBPF Kernel LSM Blocklist Map ({total_entries} active blocks):")
-                    if not blocks and not db_blocks and not agent_blocks:
-                        print("   (No PIDs currently blocked in kernel LSM map)\n")
-                    else:
-                        combined = {}
-                        for b in db_blocks + blocks:
-                            combined[b.get('pid')] = b
-                        for pid, b in combined.items():
-                            print(f"   • PID {pid} | Threat: {b.get('threat_name', 'MALWARE')} | Permanent: {b.get('is_permanent', True)} | Blocked At: {b.get('blocked_at', 'N/A')}")
-                    print()
-
-                elif cmd.lower().startswith("unblock"):
-                    parts = cmd.split()
-                    if len(parts) < 2 or not parts[1].isdigit():
-                        print("Usage: unblock <PID> (e.g. unblock 99887)\n")
-                        continue
-                    target_pid = int(parts[1])
-                    success = self.mitigator.unblock_pid(target_pid, reason="Analyst Console Manual Unblock")
-                    if success:
-                        print(f"✓ PID {target_pid} removed from kernel blocklist.\n")
-                    else:
-                        print(f"❌ Failed to unblock PID {target_pid} (not found in active blocklist).\n")
 
                 elif cmd.lower().startswith("alerts"):
                     parts = cmd.split()
@@ -447,7 +369,7 @@ class UnifiedSystemOrchestrator:
                         print("   (No threat alerts recorded in database)\n")
                     for a in alerts:
                         conf = a.get('confidence', 0.0) * 100.0
-                        print(f"   • [{a.get('timestamp')}] PID {a.get('pid')} ({a.get('comm')}) — Threat: {a.get('threat_name')} (Conf: {conf:.1f}%) -> Action: {a.get('action_taken')}")
+                        print(f"   • [{a.get('timestamp')}] PID {a.get('pid')} ({a.get('comm')}) — Threat: {a.get('threat_name')} (Conf: {conf:.1f}%) -> Source: {a.get('action_taken')}")
                     print()
 
                 elif cmd.lower().startswith("audit"):
@@ -486,8 +408,7 @@ class UnifiedSystemOrchestrator:
                         continue
                     print("\n🤖 Analyst Copilot Analyzing Context...\n")
                     history = self.db_mgr.sqlite.get_mitigation_audit_logs(limit=20)
-                    blocks = self.mitigator.get_active_blocks()
-                    answer = self.copilot.chat(user_query=prompt, audit_history=history, active_blocks=blocks)
+                    answer = self.copilot.chat(user_query=prompt, audit_history=history)
                     print(answer + "\n")
 
                 elif cmd.lower() == "reports":
@@ -501,10 +422,8 @@ class UnifiedSystemOrchestrator:
                 elif cmd.lower() == "help":
                     print("\nCatalog of Available Console Commands:")
                     print("  • status           — Display live throughput EPS, event metrics, and subsystem health")
-                    print("  • blocks           — Inspect currently active LSM kernel PID blocklist")
-                    print("  • unblock <PID>    — Immediately remove a PID from kernel LSM enforcement map")
                     print("  • alerts [limit]   — Retrieve recent threat alerts from SQLite WAL database")
-                    print("  • audit [limit]    — Retrieve LSM kernel mitigation decision history")
+                    print("  • audit [limit]    — Retrieve telemetry audit decision history")
                     print("  • query <SQL>      — Run analytical SQL queries on DuckDB columnar telemetry store")
                     print("  • chat <prompt>    — Submit security questions to Universal LLM Analyst Copilot")
                     print("  • reports          — View full SOC incident reports generated during current session")

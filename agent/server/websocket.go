@@ -1,26 +1,20 @@
 // Package server provides a combined REST API + WebSocket server
 // for the eBPF telemetry agent. It exposes:
 //
-//   - GET  /ws              — WebSocket: live event stream
-//   - GET  /api/status      — Agent health and stats
-//   - GET  /api/blocklist   — List active PID & IP blocks
-//   - POST /api/block/pid   — Block a PID  (body: {"pid":1234,"desc":"..."})
-//   - POST /api/block/ip    — Block an IP  (body: {"ip":"1.2.3.4","desc":"..."})
-//   - DELETE /api/block/pid — Unblock a PID (body: {"pid":1234})
-//   - DELETE /api/block/ip  — Unblock an IP (body: {"ip":"1.2.3.4"})
+//   - GET  /ws         — WebSocket: live event stream
+//   - GET  /api/status  — Agent health and stats
+//   - GET  /api/metrics — Agent Prometheus & probe metrics
 package server
 
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"sync"
 	"time"
 
 	agentebpf "github.com/proffaro/ebpf-ml-agent/ebpf"
-	"github.com/proffaro/ebpf-ml-agent/mapmgr"
 	"github.com/proffaro/ebpf-ml-agent/metrics"
 
 	"github.com/gorilla/websocket"
@@ -40,7 +34,6 @@ func (c *ClientConn) WriteMessage(messageType int, data []byte) error {
 // Server is the HTTP + WebSocket server for the agent.
 type Server struct {
 	events    <-chan *agentebpf.Event
-	blocklist *mapmgr.BlocklistManager
 	metrics   *metrics.Collector
 	startTime time.Time
 
@@ -52,10 +45,9 @@ type Server struct {
 }
 
 // NewServer creates a new server instance.
-func NewServer(events <-chan *agentebpf.Event, bm *mapmgr.BlocklistManager, mc *metrics.Collector) *Server {
+func NewServer(events <-chan *agentebpf.Event, mc *metrics.Collector) *Server {
 	return &Server{
 		events:    events,
-		blocklist: bm,
 		metrics:   mc,
 		startTime: time.Now(),
 		clients:   make(map[*ClientConn]bool),
@@ -73,9 +65,6 @@ func (s *Server) Start(ctx context.Context, addr string) error {
 
 	// REST API endpoints
 	mux.HandleFunc("/api/status", s.handleStatus)
-	mux.HandleFunc("/api/blocklist", s.handleListBlocklist)
-	mux.HandleFunc("/api/block/pid", s.handleBlockPID)
-	mux.HandleFunc("/api/block/ip", s.handleBlockIP)
 	mux.HandleFunc("/api/metrics", s.handleMetrics)
 
 	// WebSocket streaming endpoint
@@ -194,12 +183,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stats := s.blocklist.GetStats()
 	resp := map[string]interface{}{
 		"status":         "running",
 		"uptime_seconds": time.Since(s.startTime).Seconds(),
 		"ws_clients":     len(s.clients),
-		"blocklist":      stats,
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -214,112 +201,6 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, s.metrics.Snapshot())
 	} else {
 		writeJSON(w, http.StatusOK, map[string]string{"error": "metrics collector not initialized"})
-	}
-}
-
-func (s *Server) handleListBlocklist(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	resp := map[string]interface{}{
-		"pid_blocks": s.blocklist.ListPIDBlocks(),
-		"ip_blocks":  s.blocklist.ListIPBlocks(),
-		"stats":      s.blocklist.GetStats(),
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func (s *Server) handleBlockPID(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-		var req struct {
-			PID  uint32 `json:"pid"`
-			Desc string `json:"desc"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid JSON body", http.StatusBadRequest)
-			return
-		}
-		if req.PID == 0 {
-			http.Error(w, "pid is required", http.StatusBadRequest)
-			return
-		}
-		if err := s.blocklist.BlockPID(req.PID, req.Desc); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{
-			"status": "blocked",
-			"pid":    fmt.Sprint(req.PID),
-		})
-
-	case http.MethodDelete:
-		var req struct {
-			PID uint32 `json:"pid"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid JSON body", http.StatusBadRequest)
-			return
-		}
-		if err := s.blocklist.UnblockPID(req.PID); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{
-			"status": "unblocked",
-			"pid":    fmt.Sprint(req.PID),
-		})
-
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func (s *Server) handleBlockIP(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-		var req struct {
-			IP   string `json:"ip"`
-			Desc string `json:"desc"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid JSON body", http.StatusBadRequest)
-			return
-		}
-		if req.IP == "" {
-			http.Error(w, "ip is required", http.StatusBadRequest)
-			return
-		}
-		if err := s.blocklist.BlockIP(req.IP, req.Desc); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{
-			"status": "blocked",
-			"ip":     req.IP,
-		})
-
-	case http.MethodDelete:
-		var req struct {
-			IP string `json:"ip"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "invalid JSON body", http.StatusBadRequest)
-			return
-		}
-		if err := s.blocklist.UnblockIP(req.IP); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{
-			"status": "unblocked",
-			"ip":     req.IP,
-		})
-
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 

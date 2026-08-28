@@ -17,6 +17,8 @@ type ProbeSet struct {
 	SysTracer    *ebpf.Collection
 	LSMEnforcer  *ebpf.Collection
 	NetFilter    *ebpf.Collection
+	SSLTracer    *ebpf.Collection
+	PerfProfiler *ebpf.Collection
 
 	// Kernel attachment links (must be closed to detach probes)
 	links []link.Link
@@ -25,20 +27,17 @@ type ProbeSet struct {
 	SysTracerEvents *ebpf.Map // "events"      from sys_tracer.bpf.o
 	LSMEvents       *ebpf.Map // "lsm_events"  from lsm_enforcer.bpf.o
 	NetEvents       *ebpf.Map // "net_events"   from net_filter.bpf.o
-
-	// ── Blocklist Hash Maps (written by mapmgr/blocklist.go) ──
-	PIDBlocklist    *ebpf.Map // "pid_blocklist"    from lsm_enforcer.bpf.o
-	IPBlocklist     *ebpf.Map // "ip_blocklist"     from lsm_enforcer.bpf.o
-	NetIPBlocklist  *ebpf.Map // "net_ip_blocklist"  from net_filter.bpf.o
+	SSLEvents       *ebpf.Map // "ssl_events"   from ssl_tracer.bpf.o
+	PerfEvents      *ebpf.Map // "perf_events"  from perf_profiler.bpf.o
 
 	// ── Telemetry Counter Maps (read-only for monitoring) ──
 	PktCounter  *ebpf.Map // "pkt_counter"  from net_filter.bpf.o
 	DNSCounter  *ebpf.Map // "dns_counter"  from net_filter.bpf.o
 }
 
-// LoadAndAttach loads the three compiled eBPF object files and attaches
+// LoadAndAttach loads the compiled eBPF object files and attaches
 // every program to its corresponding kernel hook. Returns a ProbeSet
-// that provides access to all maps and must be Close()d on shutdown.
+// that provides access to all telemetry maps and must be Close()d on shutdown.
 //
 // bpfDir is the directory containing the compiled .bpf.o files
 // (e.g. "../bpf/probes").
@@ -92,10 +91,8 @@ func LoadAndAttach(bpfDir string) (*ProbeSet, error) {
 
 	// Grab maps
 	ps.LSMEvents = ps.LSMEnforcer.Maps["lsm_events"]
-	ps.PIDBlocklist = ps.LSMEnforcer.Maps["pid_blocklist"]
-	ps.IPBlocklist = ps.LSMEnforcer.Maps["ip_blocklist"]
-	if ps.LSMEvents == nil || ps.PIDBlocklist == nil || ps.IPBlocklist == nil {
-		return nil, fmt.Errorf("lsm_enforcer: required maps not found")
+	if ps.LSMEvents == nil {
+		return nil, fmt.Errorf("lsm_enforcer: 'lsm_events' map not found")
 	}
 
 	// Attach LSM programs
@@ -106,8 +103,7 @@ func LoadAndAttach(bpfDir string) (*ProbeSet, error) {
 	log.Println("[loader] lsm_enforcer attached successfully")
 
 	// ────────────────────────────────────────────────────
-	// 3. Load net_filter.bpf.o (optional — may fail without
-	//    CAP_NET_ADMIN or if no suitable interface exists)
+	// 3. Load net_filter.bpf.o (optional)
 	// ────────────────────────────────────────────────────
 	log.Println("[loader] Loading net_filter.bpf.o ...")
 	netPath := bpfDir + "/net_filter.bpf.o"
@@ -121,10 +117,39 @@ func LoadAndAttach(bpfDir string) (*ProbeSet, error) {
 				log.Printf("[loader] WARNING: net_filter collection failed: %v", err)
 			} else {
 				ps.NetEvents = ps.NetFilter.Maps["net_events"]
-				ps.NetIPBlocklist = ps.NetFilter.Maps["net_ip_blocklist"]
 				ps.PktCounter = ps.NetFilter.Maps["pkt_counter"]
 				ps.DNSCounter = ps.NetFilter.Maps["dns_counter"]
 				log.Println("[loader] net_filter loaded (TC attach requires separate step)")
+			}
+		}
+	}
+
+	// ────────────────────────────────────────────────────
+	// 4. Load ssl_tracer.bpf.o (optional eCapture TLS probe)
+	// ────────────────────────────────────────────────────
+	sslPath := bpfDir + "/ssl_tracer.bpf.o"
+	if _, err := os.Stat(sslPath); err == nil {
+		sslSpec, err := ebpf.LoadCollectionSpec(sslPath)
+		if err == nil {
+			ps.SSLTracer, err = ebpf.NewCollection(sslSpec)
+			if err == nil {
+				ps.SSLEvents = ps.SSLTracer.Maps["ssl_events"]
+				log.Println("[loader] ssl_tracer probe loaded")
+			}
+		}
+	}
+
+	// ────────────────────────────────────────────────────
+	// 5. Load perf_profiler.bpf.o (optional Kepler/Parca probe)
+	// ────────────────────────────────────────────────────
+	perfPath := bpfDir + "/perf_profiler.bpf.o"
+	if _, err := os.Stat(perfPath); err == nil {
+		perfSpec, err := ebpf.LoadCollectionSpec(perfPath)
+		if err == nil {
+			ps.PerfProfiler, err = ebpf.NewCollection(perfSpec)
+			if err == nil {
+				ps.PerfEvents = ps.PerfProfiler.Maps["perf_events"]
+				log.Println("[loader] perf_profiler probe loaded")
 			}
 		}
 	}
@@ -273,6 +298,12 @@ func (ps *ProbeSet) Close() {
 	}
 	if ps.NetFilter != nil {
 		ps.NetFilter.Close()
+	}
+	if ps.SSLTracer != nil {
+		ps.SSLTracer.Close()
+	}
+	if ps.PerfProfiler != nil {
+		ps.PerfProfiler.Close()
 	}
 
 	log.Println("[loader] All eBPF resources released.")

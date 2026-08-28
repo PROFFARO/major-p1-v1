@@ -52,9 +52,6 @@ AGENT_REST_BASE = os.getenv("AGENT_REST_BASE", "http://localhost:8900")
 
 AGENT_API_STATUS = f"{AGENT_REST_BASE}/api/status"
 AGENT_API_METRICS = f"{AGENT_REST_BASE}/api/metrics"
-AGENT_API_BLOCKLIST = f"{AGENT_REST_BASE}/api/blocklist"
-AGENT_API_BLOCK_PID = f"{AGENT_REST_BASE}/api/block/pid"
-AGENT_API_BLOCK_IP = f"{AGENT_REST_BASE}/api/block/ip"
 
 # ─────────────────────────────────────────────────────────────
 # Feature Extraction Parameters
@@ -174,7 +171,7 @@ XGBOOST_PARAMS = {
 }
 
 # ─────────────────────────────────────────────────────────────
-# Threat Classification Labels
+# Threat Classification Labels & Severity Map
 # ─────────────────────────────────────────────────────────────
 
 THREAT_LABELS = {
@@ -193,84 +190,35 @@ THREAT_LABELS = {
 
 THREAT_LABELS_INV = {v: k for k, v in THREAT_LABELS.items()}
 
+SEVERITY_LEVELS = {
+    "BENIGN": "INFO",
+    "RANSOMWARE": "CRITICAL",
+    "PRIVILEGE_ESCALATION": "HIGH",
+    "REVERSE_SHELL": "CRITICAL",
+    "DATA_EXFILTRATION": "HIGH",
+    "KERNEL_ROOTKIT": "CRITICAL",
+    "CRYPTO_MINER": "HIGH",
+    "BRUTE_FORCE": "MEDIUM",
+    "CONTAINER_ESCAPE": "CRITICAL",
+    "LOG_TAMPERING": "HIGH",
+    "DENIAL_OF_SERVICE": "HIGH",
+}
+
 # ─────────────────────────────────────────────────────────────
-# Anomaly & Mitigation Thresholds
+# Anomaly & Behavioral Detection Parameters
 # ─────────────────────────────────────────────────────────────
 
-# Isolation Forest anomaly score threshold for triggering alert
+# Isolation Forest anomaly score threshold for triggering zero-day alert
 ANOMALY_SCORE_THRESHOLD = -0.3
 
-# Minimum classifier confidence for automatic mitigation
-AUTO_MITIGATE_CONFIDENCE = 0.80
+# Minimum confidence threshold for recording a high-fidelity threat detection alert
+DETECTION_ALERT_THRESHOLD = 0.70
 
-# Cooldown period (seconds) before re-blocking same PID
-MITIGATION_COOLDOWN_SECONDS = 30.0
-
-# Dual-model consensus (Deprecated: set to False for High-Confidence Ensemble Scoring)
-DUAL_MODEL_CONSENSUS = False
-
-# Dry-run mode: log mitigation decisions without actually blocking
-DRY_RUN_DEFAULT = True
-
-# Maximum number of concurrent active PID blocks (safety cap)
-MAX_ACTIVE_BLOCKS = 50
-
-# Auto-expire: seconds before a blocked PID is automatically unblocked.
-# High-severity threats (RANSOMWARE, KERNEL_ROOTKIT, CRYPTO_MINER, REVERSE_SHELL)
-# are blocked permanently (until manual unblock). Lower-severity threats expire.
-AUTO_EXPIRE_SECONDS = 300  # 5 minutes for low/medium severity
-
-# High-severity threat classes that get PERMANENT blocks (no auto-expire)
-PERMANENT_BLOCK_THREATS = frozenset([
-    "RANSOMWARE",
-    "KERNEL_ROOTKIT",
-    "CRYPTO_MINER",
-    "REVERSE_SHELL",
-    "CONTAINER_ESCAPE",
-])
-
-# Protected PIDs that must NEVER be blocked under any circumstance
-PROTECTED_PIDS = frozenset([
-    0,   # kernel scheduler / swapper
-    1,   # init / systemd
-    2,   # kthreadd (kernel thread parent)
-])
-
-# Protected process names that must NEVER be blocked
-PROTECTED_PROCESS_NAMES = frozenset([
-    "systemd", "systemd-journald", "systemd-logind", "systemd-udevd",
-    "systemd-resolved", "systemd-timesyncd", "systemd-networkd",
-    "init", "kthreadd", "kworker", "ksoftirqd", "kswapd", "rcu_sched",
-    "rcu_preempt", "rcu_bh", "migration", "watchdog", "cpuhp",
-    "irq", "scsi_eh", "kblockd", "md", "edac-poller",
-    "containerd", "containerd-shim", "dockerd", "runc",
-    "kubelet", "kube-proxy", "kube-apiserver", "etcd",
-    "sshd", "login", "getty", "agetty",
-    "journald", "rsyslogd", "syslogd",
-    "dbus-daemon", "dbus-broker",
-    "NetworkManager", "dhclient", "wpa_supplicant",
-    "polkitd", "udisksd", "accounts-daemon",
-    "cron", "crond", "atd",
-    "auditd", "firewalld", "iptables",
-    "ebpf-ml-agent",  # our own agent process
-])
+# Falco Behavioral Rules enabled state
+BEHAVIORAL_RULES_ENABLED = True
 
 # Audit log file path
 AUDIT_LOG_PATH = LOGS_DIR / "audit_log.jsonl"
-
-# Rate limiter: max block API requests per second to Go Agent
-RATE_LIMIT_REQUESTS_PER_SECOND = 10
-
-# Background expiry sweep interval (seconds)
-EXPIRY_SWEEP_INTERVAL_SECONDS = 30
-
-# Network threats that trigger automatic IP blocking (when dst_ip is available)
-NETWORK_BLOCK_THREATS = frozenset([
-    "REVERSE_SHELL",
-    "DATA_EXFILTRATION",
-    "DENIAL_OF_SERVICE",
-    "BRUTE_FORCE",
-])
 
 # ─────────────────────────────────────────────────────────────
 # Universal LLM Security Analyst Configuration
