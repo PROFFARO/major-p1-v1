@@ -79,7 +79,7 @@ class AlertDispatcher:
                 logger.error(f"Failed to persist alert to database: {e}")
 
         logger.warning(
-            f"🚨 [DETECTION ALERT] {alert['severity']} {alert['threat_type']} "
+            f"[DETECTION ALERT] {alert['severity']} {alert['threat_type']} "
             f"(PID={alert['pid']}, Comm='{alert['comm']}', Source={alert['detection_source']}, Conf={alert['confidence']:.2f})"
         )
 

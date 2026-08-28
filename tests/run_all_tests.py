@@ -18,7 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 def run_test_suite():
     """Discover and execute all test cases under tests/ directory."""
     print("=" * 70)
-    print(" 🛡️  Running eBPF-ML Security System Centralized Test Suite")
+    print(" Running eBPF Security System Centralized Test Suite")
     print("=" * 70)
 
     loader = unittest.TestLoader()
