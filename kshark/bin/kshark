@@ -1,9 +1,0 @@
-#!/usr/bin/env bash
-#
-# KShark — Native Linux eBPF Security Observability & Threat Detection Launcher
-#
-
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export PYTHONPATH="$DIR:$DIR/..:$PYTHONPATH"
-
-exec python3 -m kshark "$@"
