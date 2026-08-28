@@ -34,6 +34,17 @@ if ENV_FILE.exists():
     except Exception:
         pass
 
+# Optional YAML configuration file loader (default sec-engine.yaml)
+YAML_CONFIG_FILE = Path(os.getenv("SEC_ENGINE_CONFIG", PROJECT_ROOT / "sec-engine.yaml"))
+YAML_CONFIG_DATA = {}
+if YAML_CONFIG_FILE.exists():
+    try:
+        import yaml
+        with open(YAML_CONFIG_FILE, "r", encoding="utf-8") as yf:
+            YAML_CONFIG_DATA = yaml.safe_load(yf) or {}
+    except Exception as _cfg_err:
+        pass
+
 LOGS_DIR = PROJECT_ROOT / "logs"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -47,8 +58,8 @@ SAVED_MODELS_DIR.mkdir(parents=True, exist_ok=True)
 # Go Agent Connectivity
 # ─────────────────────────────────────────────────────────────
 
-AGENT_WS_URL = os.getenv("AGENT_WS_URL", "ws://localhost:8900/ws")
-AGENT_REST_BASE = os.getenv("AGENT_REST_BASE", "http://localhost:8900")
+AGENT_WS_URL = os.getenv("AGENT_WS_URL") or YAML_CONFIG_DATA.get("agent", {}).get("ws_url") or "ws://localhost:8900/ws"
+AGENT_REST_BASE = os.getenv("AGENT_REST_BASE") or YAML_CONFIG_DATA.get("agent", {}).get("rest_base") or "http://localhost:8900"
 
 AGENT_API_STATUS = f"{AGENT_REST_BASE}/api/status"
 AGENT_API_METRICS = f"{AGENT_REST_BASE}/api/metrics"
@@ -58,10 +69,10 @@ AGENT_API_METRICS = f"{AGENT_REST_BASE}/api/metrics"
 # ─────────────────────────────────────────────────────────────
 
 # Sliding window duration in seconds for aggregating per-PID features
-SLIDING_WINDOW_SECONDS = 5.0
+SLIDING_WINDOW_SECONDS = float(YAML_CONFIG_DATA.get("detection", {}).get("sliding_window_seconds", 5.0))
 
 # Minimum events in a window to produce a valid feature vector
-MIN_EVENTS_PER_WINDOW = 3
+MIN_EVENTS_PER_WINDOW = int(YAML_CONFIG_DATA.get("detection", {}).get("min_events_per_window", 3))
 
 # Sensitive file paths that trigger elevated threat scoring
 SENSITIVE_PATHS = frozenset([
@@ -209,13 +220,13 @@ SEVERITY_LEVELS = {
 # ─────────────────────────────────────────────────────────────
 
 # Isolation Forest anomaly score threshold for triggering zero-day alert
-ANOMALY_SCORE_THRESHOLD = -0.3
+ANOMALY_SCORE_THRESHOLD = float(YAML_CONFIG_DATA.get("detection", {}).get("anomaly_score_threshold", -0.3))
 
 # Minimum confidence threshold for recording a high-fidelity threat detection alert
-DETECTION_ALERT_THRESHOLD = 0.70
+DETECTION_ALERT_THRESHOLD = float(YAML_CONFIG_DATA.get("detection", {}).get("detection_alert_threshold", 0.70))
 
 # Falco Behavioral Rules enabled state
-BEHAVIORAL_RULES_ENABLED = True
+BEHAVIORAL_RULES_ENABLED = bool(YAML_CONFIG_DATA.get("detection", {}).get("behavioral_rules_enabled", True))
 
 # Audit log file path
 AUDIT_LOG_PATH = LOGS_DIR / "audit_log.jsonl"
@@ -232,16 +243,16 @@ LLM_API_KEY = (
     or os.getenv("DEEPSEEK_API_KEY")
     or ""
 )
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", os.getenv("OPENAI_BASE_URL", ""))
-LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "gemini-2.5-flash")
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "auto").lower()
+LLM_BASE_URL = os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL") or YAML_CONFIG_DATA.get("copilot", {}).get("base_url") or ""
+LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME") or YAML_CONFIG_DATA.get("copilot", {}).get("model_name") or "gemini-2.5-flash"
+LLM_PROVIDER = (os.getenv("LLM_PROVIDER") or YAML_CONFIG_DATA.get("copilot", {}).get("provider") or "auto").lower()
 
 # Maximum telemetry events injected into LLM context per query
-LLM_MAX_CONTEXT_EVENTS = 200
+LLM_MAX_CONTEXT_EVENTS = int(os.getenv("LLM_MAX_CONTEXT_EVENTS") or YAML_CONFIG_DATA.get("copilot", {}).get("max_context_events", 200))
 
 # ML Engine REST API & Storage
-REST_API_HOST = os.getenv("REST_API_HOST", "0.0.0.0")
-REST_API_PORT = int(os.getenv("REST_API_PORT", "8901"))
+REST_API_HOST = os.getenv("REST_API_HOST") or YAML_CONFIG_DATA.get("api", {}).get("host") or "0.0.0.0"
+REST_API_PORT = int(os.getenv("REST_API_PORT") or os.getenv("ML_ENGINE_PORT") or YAML_CONFIG_DATA.get("api", {}).get("port", 8901))
 
 STORAGE_DIR = LOGS_DIR
 STORAGE_DIR.mkdir(parents=True, exist_ok=True)

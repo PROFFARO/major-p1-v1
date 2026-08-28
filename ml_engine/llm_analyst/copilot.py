@@ -358,6 +358,7 @@ At **{action.get('timestamp', 'NOW')}**, the eBPF Threat Engine detected a high-
 - **Process Name**: `{comm}`
 - **Executable Path**: `{exe}`
 - **Parent Process**: `{metadata.get('parent_comm', 'bash')}`
+- **Process Lineage Path**: `{metadata.get('lineage_str', 'unknown')}`
 - **Destination IP**: `{dst_ip}`
 - **Enforcement Status**: `{action_taken}` (Permanent: `{action.get('is_permanent', False)}`)
 

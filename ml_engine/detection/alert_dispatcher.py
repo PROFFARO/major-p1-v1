@@ -62,6 +62,7 @@ class AlertDispatcher:
             "mitre_id": rule_info.get("mitre_id", "T1059") if rule_info else "T1059",
             "rule_name": rule_info.get("rule_name", "") if rule_info else "",
             "description": rule_info.get("description", f"ML ensemble identified {threat_type}") if rule_info else f"ML ensemble identified {threat_type}",
+            "lineage_str": event.get("lineage_str") or (rule_info.get("lineage_str") if rule_info else f"{event.get('parent_comm', 'parent')}({event.get('ppid', 0)}) -> {event.get('comm', 'comm')}({event.get('pid', 0)})"),
             "ml_scores": ml_scores or {},
         }
 

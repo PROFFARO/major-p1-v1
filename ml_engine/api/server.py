@@ -19,6 +19,10 @@ from ml_engine.llm_analyst.copilot import LLMSecurityCopilot
 logger = logging.getLogger("ml_engine.api.server")
 
 
+from fastapi.responses import PlainTextResponse
+from ml_engine.api.routes import get_prometheus_metrics
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(
@@ -36,6 +40,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    app.add_api_route("/metrics", get_prometheus_metrics, response_class=PlainTextResponse, methods=["GET"])
     app.include_router(api_router)
     return app
 

@@ -1,0 +1,32 @@
+# eBPF Security Observability & Threat Analytics Engine Configuration
+
+agent:
+  listen: ":8900"
+  ws_url: "ws://localhost:8900/ws"
+  rest_base: "http://localhost:8900"
+  auto_build_bpf: false
+  export_dataset: false
+
+api:
+  host: "0.0.0.0"
+  port: 8901
+  enabled: true
+
+storage:
+  duckdb_path: "logs/telemetry.db"
+  sqlite_path: "logs/sec_audit.db"
+  audit_log_path: "logs/audit_log.jsonl"
+  raw_dataset_dir: "logs/telemetry_raw"
+
+detection:
+  sliding_window_seconds: 5.0
+  min_events_per_window: 3
+  detection_alert_threshold: 0.70
+  anomaly_score_threshold: -0.3
+  behavioral_rules_enabled: true
+
+copilot:
+  provider: "auto"
+  model_name: "nvidia/nemotron-3-ultra-550b-a55b:free"
+  base_url: ""
+  max_context_events: 200

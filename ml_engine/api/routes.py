@@ -47,6 +47,9 @@ def set_api_dependencies(
 # Endpoints
 # ─────────────────────────────────────────────────────────────
 
+from fastapi.responses import PlainTextResponse
+
+
 @router.get("/health", response_model=HealthStatusResponse)
 def get_health_status():
     """Return health and database connectivity status."""
@@ -56,6 +59,39 @@ def get_health_status():
         sqlite_connected=True,
         active_blocks_count=0,
     )
+
+
+@router.get("/metrics", response_class=PlainTextResponse)
+def get_prometheus_metrics():
+    """Return standard Prometheus formatted telemetry metrics."""
+    stats = {}
+    if realtime_engine_ref:
+        stats = realtime_engine_ref.get_stats()
+
+    lines = [
+        "# HELP ebpf_events_ingested_total Total raw eBPF telemetry events ingested",
+        "# TYPE ebpf_events_ingested_total counter",
+        f"ebpf_events_ingested_total {stats.get('total_events_ingested', 0)}",
+        "",
+        "# HELP ebpf_telemetry_throughput_eps Current telemetry throughput in events per second",
+        "# TYPE ebpf_telemetry_throughput_eps gauge",
+        f"ebpf_telemetry_throughput_eps {stats.get('events_per_second', 0.0)}",
+        "",
+        "# HELP ebpf_active_pid_windows Total active sliding PID feature extraction windows",
+        "# TYPE ebpf_active_pid_windows gauge",
+        f"ebpf_active_pid_windows {stats.get('active_pid_windows', 0)}",
+        "",
+        "# HELP ebpf_threats_detected_total Total security threat detections by class",
+        "# TYPE ebpf_threats_detected_total counter",
+        f"ebpf_threats_detected_total {stats.get('total_threats_detected', 0)}",
+    ]
+
+    threats_by_class = stats.get("threats_by_class", {})
+    for threat_class, count in threats_by_class.items():
+        lines.append(f'ebpf_threat_detections_by_class{{threat_class="{threat_class}"}} {count}')
+
+    lines.append("")
+    return "\n".join(lines)
 
 
 @router.get("/metrics/summary", response_model=MetricsSummaryResponse)

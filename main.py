@@ -516,6 +516,30 @@ class UnifiedSystemOrchestrator:
                     except Exception as e:
                         print(f"DuckDB SQL Execution Error: {e}\n")
 
+                elif base_cmd in ("export"):
+                    args_str = cmd[len(base_cmd):].strip()
+                    if not args_str:
+                        print("Usage: export [--format csv|parquet|json] [--out path] <SELECT SQL>\n")
+                        continue
+                    fmt = "csv"
+                    out_path = "logs/query_export.csv"
+                    sql = args_str
+
+                    if "--format" in args_str:
+                        parts = args_str.split("--format", 1)[1].strip().split(maxsplit=1)
+                        fmt = parts[0]
+                        sql = parts[1] if len(parts) > 1 else ""
+                    if "--out" in sql:
+                        parts = sql.split("--out", 1)[1].strip().split(maxsplit=1)
+                        out_path = parts[0]
+                        sql = parts[1] if len(parts) > 1 else ""
+
+                    try:
+                        res_path = self.db_mgr.duckdb.export_query(sql=sql, format_type=fmt, output_path=out_path)
+                        print(f" Successfully exported query results to: {res_path}\n")
+                    except Exception as err:
+                        print(f"Export execution error: {err}\n")
+
                 elif base_cmd in ("chat", "copilot", "analyze"):
                     prompt = cmd[len(base_cmd):].strip()
                     if not prompt:
@@ -600,6 +624,7 @@ def main():
         description="Unified System Orchestrator & Enterprise Command Center — eBPF Security System",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    parser.add_argument("--config", type=str, default=None, help="Path to custom YAML configuration file (e.g. sec-engine.yaml)")
     parser.add_argument("--dry-run", action="store_true", help="Log detection actions without applying kernel LSM PID blocks")
     parser.add_argument("--no-agent", action="store_true", help="Do not spawn Go eBPF agent background subprocess")
     parser.add_argument("--no-api", action="store_true", help="Disable FastAPI REST API server")
@@ -611,6 +636,9 @@ def main():
     parser.add_argument("--non-interactive", action="store_true", help="Run in headless daemon mode without interactive CLI console")
 
     args = parser.parse_args()
+
+    if args.config:
+        os.environ["SEC_ENGINE_CONFIG"] = args.config
 
     # Configure Central Logging after CLI args parse
     logging.basicConfig(

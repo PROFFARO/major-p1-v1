@@ -194,7 +194,16 @@ class BehavioralEngine:
             )
         )
 
+    def reload_rules_if_modified(self):
+        """Dynamic rule hot-reloading if Falco rules or custom configs update on disk."""
+        if self.falco_engine and hasattr(self.falco_engine, "reload_if_needed"):
+            try:
+                self.falco_engine.reload_if_needed()
+            except Exception as e:
+                logger.debug(f"Rule hot-reload check error: {e}")
+
     def evaluate_event(self, event: Dict[str, Any]) -> List[Dict[str, Any]]:
+        self.reload_rules_if_modified()
         alerts = []
         for rule in self.rules:
             res = rule.evaluate(event)

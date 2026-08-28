@@ -40,6 +40,7 @@ from ml_engine.models.detector import ThreatDetector
 from ml_engine.rules.behavioral_engine import BehavioralEngine
 from ml_engine.detection.alert_dispatcher import AlertDispatcher
 from ml_engine.storage import DatabaseManager, FeatureWindowRecord
+from ml_engine.preprocessing.process_graph import ProcessTreeGraph
 
 logger = logging.getLogger("ml_engine.inference.realtime_engine")
 
@@ -76,6 +77,7 @@ class RealtimeIngestionEngine:
         self.extractor = StreamingExtractor(window_seconds=window_seconds)
         self.db_mgr = db_manager or DatabaseManager()
         self.dispatcher = AlertDispatcher(db_manager=self.db_mgr)
+        self.process_graph = ProcessTreeGraph()
 
         # Threading & Control
         self._running = False
@@ -269,6 +271,10 @@ class RealtimeIngestionEngine:
 
         # Enqueue raw telemetry event into async database batch queue
         self.db_mgr.batch_writer.enqueue(event)
+
+        # Update Process Lineage DAG
+        self.process_graph.add_event(event)
+        event["lineage_str"] = self.process_graph.get_lineage_string(event.get("pid", 0))
 
         # 1. Evaluate Falco behavioral rules on incoming event
         rule_matches = self.behavioral_engine.evaluate_event(event)

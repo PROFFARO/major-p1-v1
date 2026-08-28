@@ -115,6 +115,29 @@ class DuckDBManager:
                     created_at VARCHAR
                 )
             """)
+
+            # Create analytical views for fast query aggregation
+            self.conn.execute("""
+                CREATE VIEW IF NOT EXISTS v_top_processes AS
+                SELECT comm, exe_path, COUNT(*) AS event_count
+                FROM telemetry_events
+                GROUP BY comm, exe_path
+                ORDER BY event_count DESC;
+            """)
+            self.conn.execute("""
+                CREATE VIEW IF NOT EXISTS v_threat_summary AS
+                SELECT agreed_threat, COUNT(*) AS threat_count, AVG(confidence) AS avg_confidence
+                FROM feature_windows
+                GROUP BY agreed_threat;
+            """)
+            self.conn.execute("""
+                CREATE VIEW IF NOT EXISTS v_syscall_breakdown AS
+                SELECT syscall_id, COUNT(*) AS frequency
+                FROM telemetry_events
+                GROUP BY syscall_id
+                ORDER BY frequency DESC;
+            """)
+
             logger.info("DuckDB Columnar Store initialized at %s", self.db_path)
 
     @staticmethod
@@ -186,6 +209,24 @@ class DuckDBManager:
             if len(res) > limit:
                 res = res.head(limit)
             return res.to_dict(orient="records")
+
+    def export_query(self, sql: str, format_type: str, output_path: Path) -> str:
+        """Export DuckDB SQL query results to CSV, Parquet, or JSON file."""
+        out_path = Path(output_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        fmt = format_type.lower()
+
+        with self._lock:
+            if fmt == "csv":
+                self.conn.execute(f"COPY ({sql}) TO '{out_path}' (HEADER, DELIMITER ',');")
+            elif fmt == "parquet":
+                self.conn.execute(f"COPY ({sql}) TO '{out_path}' (FORMAT PARQUET);")
+            elif fmt == "json":
+                self.conn.execute(f"COPY ({sql}) TO '{out_path}' (FORMAT JSON);")
+            else:
+                raise ValueError(f"Unsupported export format: {format_type}. Use 'csv', 'parquet', or 'json'.")
+
+        return str(out_path)
 
     def get_event_count(self) -> int:
         """Return total telemetry event row count in DuckDB."""
