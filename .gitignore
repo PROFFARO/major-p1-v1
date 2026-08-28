@@ -18,6 +18,8 @@ bpf/probes/*.o
 *.dylib
 *.dll
 
+bin/*
+
 # ── Go Binaries & Build Artifacts ──
 agent/ebpf-ml-agent
 agent/agent

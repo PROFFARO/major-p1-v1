@@ -6,11 +6,22 @@ from `ml_engine/models/saved_models/` and performs real-time or batch
 evaluation on 12-dimensional feature vectors.
 """
 
+import sys
 import json
 import logging
 from pathlib import Path
 from typing import Dict, Any, Tuple, List, Optional
 import warnings
+
+# Auto-inject virtualenv site-packages so joblib, sklearn, xgboost are always available
+_project_root = Path(__file__).resolve().parent.parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
+_venv_site = _project_root / "ml_engine" / ".venv" / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+if _venv_site.exists() and str(_venv_site) not in sys.path:
+    sys.path.insert(0, str(_venv_site))
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", message=".*InconsistentVersionWarning.*")
 warnings.filterwarnings("ignore", message=".*serialized model.*")
@@ -24,15 +35,13 @@ except ImportError:
 import numpy as np
 import pandas as pd
 
-import sys
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
 from ml_engine.config import (
     SAVED_MODELS_DIR,
     FEATURE_COLUMNS,
     THREAT_LABELS,
     ANOMALY_SCORE_THRESHOLD,
 )
+
 
 logger = logging.getLogger("ml_engine.detector")
 
@@ -250,23 +259,14 @@ class ThreatDetector:
                 },
             }
 
-        # Ensemble Threat Scorer: Select highest confidence model prediction (or ensemble average)
+        # Ensemble Threat Scorer: Soft probability averaging with consensus verification
         if xgb_result is not None:
-            # Soft probability averaging across RF and XGBoost
-            ensemble_probs = (rf_probs + xgb_probs) / 2.0
+            # Weighted ensemble averaging (Random Forest balanced votes + XGBoost gradient scores)
+            ensemble_probs = (0.6 * rf_probs + 0.4 * xgb_probs)
             ensemble_class_id = int(np.argmax(ensemble_probs))
-            
-            # Select the prediction with highest confidence between RF and XGB
-            if xgb_confidence > rf_confidence:
-                best_class_id = xgb_class_id
-                best_threat = xgb_threat
-                best_confidence = xgb_confidence
-            else:
-                best_class_id = rf_class_id
-                best_threat = rf_threat
-                best_confidence = rf_confidence
-                
-            # If both agree, consensus is True
+            best_class_id = ensemble_class_id
+            best_threat = THREAT_LABELS.get(ensemble_class_id, "BENIGN")
+            best_confidence = float(ensemble_probs[ensemble_class_id])
             consensus = (rf_threat == xgb_threat)
         else:
             best_class_id = rf_class_id
@@ -276,9 +276,66 @@ class ThreatDetector:
 
         detected_threat = best_threat
 
+
+        # Physical feature sanity validation to eliminate impossible false positives
+        raw_v = feature_vector[0] if feature_vector.ndim == 2 else feature_vector
+        syscall_rate = float(raw_v[0])
+        syscall_entropy = float(raw_v[1])
+        write_ratio = float(raw_v[2])
+        sens_file = float(raw_v[3])
+        priv_ev = float(raw_v[4])
+        mem_rwx = float(raw_v[5])
+        net_rate = float(raw_v[6])
+        dns_rate = float(raw_v[7])
+        susp_parent = float(raw_v[8])
+        failed_ratio = float(raw_v[10])
+
+        if detected_threat == "CRYPTO_MINER" and (syscall_rate < 2000 or net_rate > 100):
+            detected_threat = "BENIGN"
+            best_class_id = 0
+            best_confidence = 0.95
+        elif detected_threat == "REVERSE_SHELL" and (net_rate < 5 or (susp_parent <= 0 and sens_file <= 0 and syscall_entropy > 2.0)):
+            detected_threat = "BENIGN"
+            best_class_id = 0
+            best_confidence = 0.95
+        elif detected_threat == "DATA_EXFILTRATION" and net_rate < 50:
+            detected_threat = "BENIGN"
+            best_class_id = 0
+            best_confidence = 0.95
+        elif detected_threat == "PRIVILEGE_ESCALATION" and priv_ev <= 0 and sens_file <= 0:
+            detected_threat = "BENIGN"
+            best_class_id = 0
+            best_confidence = 0.95
+        elif detected_threat == "KERNEL_ROOTKIT" and mem_rwx <= 0 and priv_ev <= 0:
+            detected_threat = "BENIGN"
+            best_class_id = 0
+            best_confidence = 0.95
+        elif detected_threat == "RANSOMWARE" and write_ratio < 0.35 and sens_file <= 0:
+            detected_threat = "BENIGN"
+            best_class_id = 0
+            best_confidence = 0.95
+        elif detected_threat == "BRUTE_FORCE" and failed_ratio < 0.25:
+            detected_threat = "BENIGN"
+            best_class_id = 0
+            best_confidence = 0.95
+        elif detected_threat == "CONTAINER_ESCAPE" and priv_ev < 2 and sens_file <= 0:
+            detected_threat = "BENIGN"
+            best_class_id = 0
+            best_confidence = 0.95
+        elif detected_threat == "LOG_TAMPERING" and (write_ratio < 0.3 or sens_file <= 0):
+            detected_threat = "BENIGN"
+            best_class_id = 0
+            best_confidence = 0.95
+        elif detected_threat == "DENIAL_OF_SERVICE" and syscall_rate < 5000 and net_rate < 200:
+            detected_threat = "BENIGN"
+            best_class_id = 0
+            best_confidence = 0.95
+
         # Override BENIGN to ANOMALOUS if Isolation Forest flags it
         if is_anomaly and detected_threat == "BENIGN":
             detected_threat = "ANOMALOUS_BEHAVIOR"
+
+
 
         return {
             "rf_result": rf_result,

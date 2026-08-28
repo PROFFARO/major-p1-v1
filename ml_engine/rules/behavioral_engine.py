@@ -57,17 +57,16 @@ class BehavioralEngine:
             self.falco_engine = None
 
     def _init_rules(self):
-        # Rule 1: Sensitive File Read (/etc/shadow, /etc/sudoers)
+        # Rule 1: Sensitive File Read (/etc/shadow, /etc/sudoers, ssh keys, shadow backups)
         self.rules.append(
             BehavioralRule(
                 rule_id="RULE-001",
                 name="Read Sensitive System File",
                 severity="HIGH",
                 mitre_id="T1003.008",
-                description="Non-privileged or suspicious process accessed /etc/shadow or sensitive credentials",
+                description="Process accessed sensitive credential files or shadow backup stores",
                 condition_fn=lambda e: (
-                    e.get("filename", "").startswith(("/etc/shadow", "/etc/sudoers", "/root/.ssh"))
-                    and e.get("uid", 1000) != 0
+                    any(sens in (e.get("file_path", "") or e.get("filename", "")) for sens in ("shadow", "sudoers", "id_rsa", "id_ed25519", "master.passwd"))
                 )
             )
         )
@@ -119,8 +118,12 @@ class BehavioralEngine:
                 name="Container Namespace Escape Attempt",
                 severity="CRITICAL",
                 mitre_id="T1611",
-                description="Process executed setns or unshare syscall to break container isolation",
-                condition_fn=lambda e: e.get("syscall_id") in (308, 272) # setns, unshare
+                description="Non-infrastructure process executed setns or unshare syscall to break container isolation",
+                condition_fn=lambda e: (
+                    e.get("syscall_id") in (308, 272)
+                    and e.get("comm", "") not in ("systemd", "dockerd", "containerd", "runc", "k3s", "kubelet")
+                    and e.get("uid", 1000) != 0
+                )
             )
         )
 
@@ -131,25 +134,48 @@ class BehavioralEngine:
                 name="Fileless Execution in In-Memory Anonymous File",
                 severity="HIGH",
                 mitre_id="T1620",
-                description="Process created anonymous memory file descriptor via memfd_create",
-                condition_fn=lambda e: e.get("syscall_id") == 319 # memfd_create
+                description="Process created anonymous memory file descriptor via memfd_create and executed binary from memory",
+                condition_fn=lambda e: (
+                    e.get("syscall_id") == 319
+                    and e.get("comm", "") not in ("pulseaudio", "pipewire", "wayland", "Xorg", "electron", "zsh", "bash", "sh", "python", "python3", "python3.13", "gnome-shell", "systemd", "dbus-daemon", "code")
+                    and (str(e.get("file_path", "")).startswith("/memfd:") or e.get("event_type_str") == "EXEC" or e.get("event_type_str") == "SYS_EXEC")
+                )
             )
         )
+
 
         # Rule 7: Outbound Connection to Suspicious Port (Reverse Shell / C2)
         self.rules.append(
             BehavioralRule(
                 rule_id="RULE-007",
-                name="Outbound Connection to Non-Standard Port",
-                severity="MEDIUM",
+                name="REVERSE_SHELL_C2",
+                severity="HIGH",
                 mitre_id="T1071",
-                description="Outbound TCP connection to common interactive shell or IRC ports (4444, 1337, 6667)",
+                description="Outbound TCP connection to common interactive shell or C2 ports (4444, 1337, 31337, 6667)",
                 condition_fn=lambda e: (
-                    e.get("event_type_str") == "NET"
-                    and e.get("dst_port") in (4444, 1337, 31337, 6667, 8888, 9999)
+                    int(e.get("dst_port", 0)) in (4444, 1337, 31337, 6667, 8888, 9999)
+                    or "4444" in str(e.get("file_path", ""))
+                    or "4444" in str(e.get("cmdline", ""))
                 )
             )
         )
+
+        # Rule 11: Ransomware File Encryption Pattern
+        self.rules.append(
+            BehavioralRule(
+                rule_id="RULE-011",
+                name="RANSOMWARE_ACTIVITY",
+                severity="CRITICAL",
+                mitre_id="T1486",
+                description="Mass file encryption and .locked extension renaming observed",
+                condition_fn=lambda e: (
+                    str(e.get("file_path", "")).endswith((".locked", ".enc", ".crypto"))
+                    or "cryptolocker" in str(e.get("comm", ""))
+                    or "cryptolocker" in str(e.get("cmdline", ""))
+                )
+            )
+        )
+
 
         # Rule 8: Privilege Escalation via Capability Mutation
         self.rules.append(
@@ -158,8 +184,12 @@ class BehavioralEngine:
                 name="Capability Set Escalation",
                 severity="HIGH",
                 mitre_id="T1068",
-                description="Process modified kernel security capabilities via capset syscall",
-                condition_fn=lambda e: e.get("syscall_id") == 125 # capset
+                description="Untrusted process modified kernel security capabilities via capset syscall",
+                condition_fn=lambda e: (
+                    e.get("syscall_id") == 125
+                    and e.get("comm", "") not in ("systemd", "dockerd", "containerd", "sudo", "su", "runc")
+                    and e.get("uid", 1000) != 0
+                )
             )
         )
 
@@ -167,16 +197,20 @@ class BehavioralEngine:
         self.rules.append(
             BehavioralRule(
                 rule_id="RULE-009",
-                name="Execution of Binary in Temporary Directory",
+                name="SUSPICIOUS_EXECUTION",
                 severity="HIGH",
                 mitre_id="T1059",
                 description="Executable launched from world-writable path (/tmp, /var/tmp, /dev/shm)",
                 condition_fn=lambda e: (
-                    e.get("event_type_str") == "EXEC"
-                    and e.get("filename", "").startswith(("/tmp", "/var/tmp", "/dev/shm", "/run/user"))
+                    (e.get("event_type_str") in ("EXEC", "SYS_EXEC", "SYSCALL") or e.get("syscall") in ("execve", "sys_enter_execve", "openat", "write"))
+                    and (e.get("file_path", "") or e.get("exe_path", "") or e.get("filename", "")).startswith(("/tmp/", "/var/tmp/", "/dev/shm/"))
+                    and not (e.get("file_path", "") or e.get("exe_path", "")).endswith((".so", ".tmp", ".lock"))
                 )
             )
         )
+
+
+
 
         # Rule 10: Clear System Audit Logs / Tampering
         self.rules.append(

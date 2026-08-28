@@ -15,12 +15,21 @@ CLI Usage:
   python trainer.py --full-cloud --num-samples 5000
 """
 
+import sys
 import argparse
 import json
 import logging
-import sys
 from pathlib import Path
 from typing import Tuple, Dict
+
+# Auto-inject virtualenv site-packages so joblib, sklearn, xgboost are always available
+_project_root = Path(__file__).resolve().parent.parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
+_venv_site = _project_root / "ml_engine" / ".venv" / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+if _venv_site.exists() and str(_venv_site) not in sys.path:
+    sys.path.insert(0, str(_venv_site))
 
 import joblib
 import numpy as np
@@ -37,12 +46,11 @@ from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val
 from sklearn.preprocessing import StandardScaler
 from xgboost import XGBClassifier
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
-
 from ml_engine.config import (
     DATASET_DIR,
     SAVED_MODELS_DIR,
     FEATURE_COLUMNS,
+
     ISOLATION_FOREST_PARAMS,
     RANDOM_FOREST_PARAMS,
     XGBOOST_PARAMS,
@@ -69,29 +77,40 @@ def generate_synthetic_attack_telemetry(
     feature_list = []
     labels = []
 
-    # 1. Benign samples from real dataset
-    benign_features = benign_df[FEATURE_COLUMNS].copy() if not benign_df.empty else pd.DataFrame()
-    if not benign_features.empty:
-        feature_list.append(benign_features.values)
-        labels.extend([THREAT_LABELS_INV["BENIGN"]] * len(benign_features))
-    else:
-        # Synthetic BENIGN workload (normal system processes)
-        benign_syn = np.column_stack([
-            np.random.uniform(50, 1000, num_samples_per_class),     # syscall_rate
-            np.random.uniform(2.0, 4.5, num_samples_per_class),     # syscall_entropy (high/normal diversity)
-            np.random.uniform(0.01, 0.15, num_samples_per_class),   # file_write_ratio
-            np.zeros(num_samples_per_class),                        # sensitive_file_access
-            np.zeros(num_samples_per_class),                        # privilege_events
-            np.zeros(num_samples_per_class),                        # memory_rwx_count
-            np.random.uniform(0, 10, num_samples_per_class),        # network_outbound_rate
-            np.random.uniform(0, 2, num_samples_per_class),         # dns_query_rate
-            np.zeros(num_samples_per_class),                        # parent_is_suspicious
-            np.random.uniform(2, 5, num_samples_per_class),         # execution_path_depth
-            np.random.uniform(0.0, 0.02, num_samples_per_class),    # failed_syscall_ratio
-            np.random.uniform(8, 25, num_samples_per_class),        # unique_syscall_count
-        ])
-        feature_list.append(benign_syn)
-        labels.extend([THREAT_LABELS_INV["BENIGN"]] * num_samples_per_class)
+    # 1. Comprehensive Benign samples (both idle, low-rate, medium, and high-rate system daemons)
+    half = num_samples_per_class // 2
+    benign_idle = np.column_stack([
+        np.random.uniform(0.1, 50, half),                      # syscall_rate
+        np.random.uniform(0.0, 2.5, half),                      # syscall_entropy
+        np.random.uniform(0.0, 0.2, half),                      # file_write_ratio
+        np.zeros(half),                                         # sensitive_file_access
+        np.zeros(half),                                         # privilege_events
+        np.zeros(half),                                         # memory_rwx_count
+        np.zeros(half),                                         # network_outbound_rate
+        np.zeros(half),                                         # dns_query_rate
+        np.zeros(half),                                         # parent_is_suspicious
+        np.random.uniform(1, 5, half),                          # execution_path_depth
+        np.random.uniform(0.0, 0.05, half),                     # failed_syscall_ratio
+        np.random.uniform(1, 8, half),                          # unique_syscall_count
+    ])
+
+    benign_active = np.column_stack([
+        np.random.uniform(50, 2500, num_samples_per_class - half),  # syscall_rate
+        np.random.uniform(1.5, 4.5, num_samples_per_class - half),  # syscall_entropy
+        np.random.uniform(0.0, 0.25, num_samples_per_class - half), # file_write_ratio
+        np.zeros(num_samples_per_class - half),                     # sensitive_file_access
+        np.zeros(num_samples_per_class - half),                     # privilege_events
+        np.zeros(num_samples_per_class - half),                     # memory_rwx_count
+        np.random.uniform(0, 20, num_samples_per_class - half),     # network_outbound_rate
+        np.random.uniform(0, 5, num_samples_per_class - half),      # dns_query_rate
+        np.zeros(num_samples_per_class - half),                     # parent_is_suspicious
+        np.random.uniform(2, 6, num_samples_per_class - half),      # execution_path_depth
+        np.random.uniform(0.0, 0.03, num_samples_per_class - half), # failed_syscall_ratio
+        np.random.uniform(5, 30, num_samples_per_class - half),     # unique_syscall_count
+    ])
+    feature_list.append(np.vstack([benign_idle, benign_active]))
+    labels.extend([THREAT_LABELS_INV["BENIGN"]] * num_samples_per_class)
+
 
     # 2. Ransomware samples
     rw = np.column_stack([

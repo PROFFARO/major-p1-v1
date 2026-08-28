@@ -1,0 +1,63 @@
+{
+  "feature_columns": [
+    "syscall_rate",
+    "syscall_entropy",
+    "file_write_ratio",
+    "sensitive_file_access",
+    "privilege_events",
+    "memory_rwx_count",
+    "network_outbound_rate",
+    "dns_query_rate",
+    "parent_is_suspicious",
+    "execution_path_depth",
+    "failed_syscall_ratio",
+    "unique_syscall_count"
+  ],
+  "threat_labels": {
+    "0": "BENIGN",
+    "1": "RANSOMWARE",
+    "2": "PRIVILEGE_ESCALATION",
+    "3": "REVERSE_SHELL",
+    "4": "DATA_EXFILTRATION",
+    "5": "KERNEL_ROOTKIT",
+    "6": "CRYPTO_MINER",
+    "7": "BRUTE_FORCE",
+    "8": "CONTAINER_ESCAPE",
+    "9": "LOG_TAMPERING",
+    "10": "DENIAL_OF_SERVICE"
+  },
+  "dataset_summary": {
+    "total_samples": 33000,
+    "train_samples": 26400,
+    "test_samples": 6600
+  },
+  "metrics": {
+    "random_forest": {
+      "accuracy": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1_score": 1.0,
+      "cv_f1_mean": 0.9999696969486532
+    },
+    "xgboost": {
+      "accuracy": 0.9998484848484849,
+      "precision": 0.9998487369535621,
+      "recall": 0.9998484848484849,
+      "f1_score": 0.9998484847432659
+    }
+  },
+  "feature_importance": {
+    "syscall_rate": 0.13686501175348845,
+    "syscall_entropy": 0.03531714526046541,
+    "file_write_ratio": 0.14164134360133174,
+    "sensitive_file_access": 0.08246793941189681,
+    "privilege_events": 0.08368948578359842,
+    "memory_rwx_count": 0.06998799541260517,
+    "network_outbound_rate": 0.20275804147007814,
+    "dns_query_rate": 0.09923746099388964,
+    "parent_is_suspicious": 0.041150692499740626,
+    "execution_path_depth": 0.00815080725909478,
+    "failed_syscall_ratio": 0.07025507319281545,
+    "unique_syscall_count": 0.028479003360995517
+  }
+}

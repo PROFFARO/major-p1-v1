@@ -279,14 +279,24 @@ class RealtimeIngestionEngine:
         # 1. Evaluate Falco behavioral rules on incoming event
         rule_matches = self.behavioral_engine.evaluate_event(event)
         for match in rule_matches:
+            rule_name = match.get("rule_name") or "BEHAVIORAL_THREAT"
+            event["threat_name"] = rule_name
+            event["confidence"] = 1.0
+            event["detection_source"] = "behavioral_rule"
             alert = self.dispatcher.dispatch_alert(
                 event=event,
-                threat_type=match["rule_name"],
+                threat_type=rule_name,
                 confidence=1.0,
                 detection_source="behavioral_rule",
                 rule_info=match,
             )
             actions.append(alert)
+            if self.on_detection_callback and alert:
+                try:
+                    self.on_detection_callback(alert)
+                except Exception as e:
+                    logger.error("Subscriber callback failed: %s", e)
+
 
         # 2. Feed event into StreamingExtractor for ML sliding window feature extraction
         completed_windows = self.extractor.ingest(event)
