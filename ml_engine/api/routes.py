@@ -35,6 +35,8 @@ def set_api_dependencies(
     db_mgr: DatabaseManager,
     copilot: LLMSecurityCopilot,
     engine=None,
+    mitigator=None,
+    **kwargs,
 ):
     """Inject global application dependencies into API routes."""
     global db_manager, copilot_instance, realtime_engine_ref

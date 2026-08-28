@@ -47,6 +47,7 @@ from ml_engine.config import (
     LLM_MODEL_NAME,
     LLM_PROVIDER,
     LOGS_DIR,
+    DATASET_DIR,
 )
 from ml_engine.models.detector import ThreatDetector
 from ml_engine.rules.behavioral_engine import BehavioralEngine
@@ -229,6 +230,7 @@ class UnifiedSystemOrchestrator:
             cmd.extend(["--bpf-dir", self.bpf_dir])
         if self.export_dataset:
             cmd.append("--export-dataset")
+            cmd.extend(["--dataset-dir", str(DATASET_DIR)])
         if self.auto_build_bpf:
             cmd.append("--auto-build-bpf")
 

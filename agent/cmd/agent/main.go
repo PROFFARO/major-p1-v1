@@ -2,7 +2,7 @@
 //
 // Usage:
 //
-//	sudo ./ebpf-ml-agent [--bpf-dir ../../bpf/probes] [--listen :8900] [--dataset-dir ./data]
+//	sudo ./ebpf-ml-agent [--bpf-dir ../../bpf/probes] [--listen :8900] [--dataset-dir ../logs/telemetry_raw]
 package main
 
 import (
@@ -25,7 +25,7 @@ import (
 func main() {
 	bpfDir := flag.String("bpf-dir", "../../bpf/probes", "Path to directory containing compiled .bpf.o files")
 	listenAddr := flag.String("listen", ":8900", "HTTP + WebSocket listen address")
-	datasetDir := flag.String("dataset-dir", "./data", "Directory to save .jsonl telemetry dataset files")
+	datasetDir := flag.String("dataset-dir", "../logs/telemetry_raw", "Directory to save .jsonl telemetry dataset files")
 	exportDataset := flag.Bool("export-dataset", false, "Enable continuous logging of raw telemetry to .jsonl dataset files")
 	autoBuildBPF := flag.Bool("auto-build-bpf", false, "Automatically compile .bpf.c probe files if outdated or missing")
 	eventBufSize := flag.Int("event-buf", 8192, "Internal event channel buffer depth")
@@ -38,6 +38,19 @@ func main() {
 		for _, cand := range candidates {
 			if _, err := os.Stat(cand); err == nil {
 				resolvedBpfDir = cand
+				break
+			}
+		}
+	}
+
+	// Auto-resolve datasetDir path if relative path parent exists
+	resolvedDatasetDir := *datasetDir
+	if _, err := os.Stat(resolvedDatasetDir); os.IsNotExist(err) {
+		candidates := []string{"../logs/telemetry_raw", "./logs/telemetry_raw", "logs/telemetry_raw"}
+		for _, cand := range candidates {
+			parent := filepath.Dir(cand)
+			if _, err := os.Stat(parent); err == nil {
+				resolvedDatasetDir = cand
 				break
 			}
 		}
@@ -90,7 +103,7 @@ func main() {
 	var exporter *logger.Exporter
 	if *exportDataset {
 		var err error
-		exporter, err = logger.NewExporter(*datasetDir, *eventBufSize)
+		exporter, err = logger.NewExporter(resolvedDatasetDir, *eventBufSize)
 		if err != nil {
 			log.Printf("[agent] Telemetry dataset exporter initialization warning: %v", err)
 		}

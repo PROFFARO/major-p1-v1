@@ -11,7 +11,7 @@ Features Used (12 dimensions):
    parent_is_suspicious, execution_path_depth, failed_syscall_ratio, unique_syscall_count]
 
 CLI Usage:
-  python trainer.py --dataset-dir ../../agent/data --num-samples 3000 --subsample 10
+  python trainer.py --dataset-dir ../../logs/telemetry_raw --num-samples 3000 --subsample 10
   python trainer.py --full-cloud --num-samples 5000
 """
 

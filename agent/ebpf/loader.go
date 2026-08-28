@@ -79,30 +79,30 @@ func LoadAndAttach(bpfDir string) (*ProbeSet, error) {
 	log.Println("[loader] sys_tracer attached successfully")
 
 	// ────────────────────────────────────────────────────
-	// 2. Load lsm_enforcer.bpf.o
+	// 2. Load lsm_enforcer.bpf.o (Optional BPF LSM Probe)
 	// ────────────────────────────────────────────────────
 	log.Println("[loader] Loading lsm_enforcer.bpf.o ...")
-	lsmSpec, err := ebpf.LoadCollectionSpec(bpfDir + "/lsm_enforcer.bpf.o")
-	if err != nil {
-		return nil, fmt.Errorf("loading lsm_enforcer spec: %w", err)
+	lsmPath := bpfDir + "/lsm_enforcer.bpf.o"
+	if _, err := os.Stat(lsmPath); err == nil {
+		lsmSpec, err := ebpf.LoadCollectionSpec(lsmPath)
+		if err != nil {
+			log.Printf("[loader] WARNING: lsm_enforcer spec load failed: %v", err)
+		} else {
+			ps.LSMEnforcer, err = ebpf.NewCollection(lsmSpec)
+			if err != nil {
+				log.Printf("[loader] WARNING: lsm_enforcer collection creation failed: %v", err)
+			} else {
+				ps.LSMEvents = ps.LSMEnforcer.Maps["lsm_events"]
+				if err := ps.attachLSMEnforcer(); err != nil {
+					log.Printf("[loader] WARNING: attaching lsm_enforcer failed: %v", err)
+				} else {
+					log.Println("[loader] lsm_enforcer attached successfully")
+				}
+			}
+		}
+	} else {
+		log.Printf("[loader] WARNING: lsm_enforcer.bpf.o not found at %s", lsmPath)
 	}
-	ps.LSMEnforcer, err = ebpf.NewCollection(lsmSpec)
-	if err != nil {
-		return nil, fmt.Errorf("creating lsm_enforcer collection: %w", err)
-	}
-
-	// Grab maps
-	ps.LSMEvents = ps.LSMEnforcer.Maps["lsm_events"]
-	if ps.LSMEvents == nil {
-		return nil, fmt.Errorf("lsm_enforcer: 'lsm_events' map not found")
-	}
-
-	// Attach LSM programs
-	if err := ps.attachLSMEnforcer(); err != nil {
-		ps.Close()
-		return nil, fmt.Errorf("attaching lsm_enforcer: %w", err)
-	}
-	log.Println("[loader] lsm_enforcer attached successfully")
 
 	// ────────────────────────────────────────────────────
 	// 3. Load net_filter.bpf.o (optional)
