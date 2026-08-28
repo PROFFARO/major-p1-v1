@@ -1,4 +1,4 @@
-// Package ebpf provides KubeArmor security policy parsing and posture enforcement logic.
+// Package ebpf provides KubeArmor policy enforcement posture and container isolation management.
 package ebpf
 
 import (
@@ -7,122 +7,117 @@ import (
 	"sync"
 )
 
-// KubeArmorAction represents KubeArmor enforcement actions (Allow, Audit, Block).
+// KubeArmorAction enum (kubearmor_policy.h)
 type KubeArmorAction uint32
 
 const (
-	ActionKubeAllow KubeArmorAction = 0
-	ActionKubeAudit KubeArmorAction = 1
-	ActionKubeBlock KubeArmorAction = 2
+	KubeArmorActionAllow KubeArmorAction = 0
+	KubeArmorActionAudit KubeArmorAction = 1
+	KubeArmorActionBlock KubeArmorAction = 2
 )
 
-// String returns a human-readable action string.
-func (a KubeArmorAction) String() string {
-	switch a {
-	case ActionKubeAllow:
-		return "ALLOW"
-	case ActionKubeAudit:
-		return "AUDIT"
-	case ActionKubeBlock:
-		return "BLOCK"
-	default:
-		return "UNKNOWN"
+// KubeArmorPosture enum
+type KubeArmorPosture uint32
+
+const (
+	KubeArmorPostureProcess KubeArmorPosture = 101
+	KubeArmorPostureFile    KubeArmorPosture = 102
+	KubeArmorPostureNetwork KubeArmorPosture = 103
+	KubeArmorPostureCapable KubeArmorPosture = 104
+)
+
+// KubeArmorPolicyRule mirror of struct kubearmor_policy_rule
+type KubeArmorPolicyRule struct {
+	PostureType KubeArmorPosture `json:"posture_type"`
+	Action      KubeArmorAction  `json:"action"`
+	Path        string           `json:"path"`
+	Source      string           `json:"source"`
+}
+
+// KubeArmorContainerPosture mirror of struct kubearmor_container_posture
+type KubeArmorContainerPosture struct {
+	PidNS       uint32          `json:"pid_ns"`
+	MntNS       uint32          `json:"mnt_ns"`
+	ProcPosture KubeArmorAction `json:"proc_posture"`
+	FilePosture KubeArmorAction `json:"file_posture"`
+	NetPosture  KubeArmorAction `json:"net_posture"`
+}
+
+// KubeArmorPolicyEngine manages container security policy evaluation and block enforcement.
+type KubeArmorPolicyEngine struct {
+	mu         sync.RWMutex
+	postures   map[uint32]*KubeArmorContainerPosture
+	rules      []*KubeArmorPolicyRule
+	auditLogs  []string
+}
+
+// NewKubeArmorPolicyEngine creates a new KubeArmor security policy engine.
+func NewKubeArmorPolicyEngine() *KubeArmorPolicyEngine {
+	return &KubeArmorPolicyEngine{
+		postures: make(map[uint32]*KubeArmorContainerPosture),
+		rules:    make([]*KubeArmorPolicyRule, 0),
 	}
 }
 
-// KubeArmorPolicy represents a container security policy rule.
-type KubeArmorPolicy struct {
-	Name        string          `json:"name"`
-	Namespace   string          `json:"namespace"`
-	Action      KubeArmorAction `json:"action"`
-	MatchPaths  []string        `json:"match_paths"`
-	MatchDirs   []string        `json:"match_dirs"`
-	MatchProcs  []string        `json:"match_procs"`
-	Severity    string          `json:"severity"`
-}
-
-// KubeArmorEngine manages active security policies and evaluates telemetry events.
-type KubeArmorEngine struct {
-	mu       sync.RWMutex
-	policies map[string]*KubeArmorPolicy
-}
-
-// NewKubeArmorEngine creates a new policy enforcement engine.
-func NewKubeArmorEngine() *KubeArmorEngine {
-	engine := &KubeArmorEngine{
-		policies: make(map[string]*KubeArmorPolicy),
+// AddRule registers a security policy rule.
+func (e *KubeArmorPolicyEngine) AddRule(rule *KubeArmorPolicyRule) {
+	if rule == nil {
+		return
 	}
-	engine.initDefaultPolicies()
-	return engine
-}
-
-func (e *KubeArmorEngine) initDefaultPolicies() {
-	// Policy 1: Protect System Credentials
-	e.AddPolicy(&KubeArmorPolicy{
-		Name:        "k8s-block-credentials-access",
-		Namespace:   "default",
-		Action:      ActionKubeBlock,
-		MatchPaths:  []string{"/etc/shadow", "/etc/sudoers"},
-		Severity:    "Critical",
-	})
-
-	// Policy 2: Block Execution in /tmp
-	e.AddPolicy(&KubeArmorPolicy{
-		Name:       "k8s-block-tmp-execution",
-		Namespace:  "default",
-		Action:     ActionKubeBlock,
-		MatchDirs:  []string{"/tmp/", "/var/tmp/", "/dev/shm/"},
-		Severity:   "High",
-	})
-}
-
-// AddPolicy registers a new KubeArmor security policy.
-func (e *KubeArmorEngine) AddPolicy(policy *KubeArmorPolicy) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.policies[policy.Name] = policy
+	e.rules = append(e.rules, rule)
 }
 
-// EvaluateEvent checks if a telemetry event matches any active KubeArmor policy.
-func (e *KubeArmorEngine) EvaluateEvent(ev *Event) (KubeArmorAction, *KubeArmorPolicy) {
-	if ev == nil {
-		return ActionKubeAllow, nil
+// SetContainerPosture configures security posture enforcement for a given mount namespace.
+func (e *KubeArmorPolicyEngine) SetContainerPosture(mntNS uint32, posture *KubeArmorContainerPosture) {
+	if posture == nil {
+		return
 	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.postures[mntNS] = posture
+}
 
+// EvaluateAccess evaluates an access request against active KubeArmor security posture rules.
+func (e *KubeArmorPolicyEngine) EvaluateAccess(mntNS uint32, postureType KubeArmorPosture, path string) KubeArmorAction {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	for _, policy := range e.policies {
-		// Check path matches
-		for _, path := range policy.MatchPaths {
-			if strings.HasPrefix(ev.Filename, path) {
-				return policy.Action, policy
-			}
-		}
+	containerPosture, exists := e.postures[mntNS]
+	if !exists {
+		// Default behavior: AUDIT mode
+		return KubeArmorActionAudit
+	}
 
-		// Check directory matches
-		for _, dir := range policy.MatchDirs {
-			if strings.HasPrefix(ev.Filename, dir) && ev.Type == EventTypeExec {
-				return policy.Action, policy
-			}
-		}
+	var action KubeArmorAction
+	switch postureType {
+	case KubeArmorPostureProcess:
+		action = containerPosture.ProcPosture
+	case KubeArmorPostureFile:
+		action = containerPosture.FilePosture
+	case KubeArmorPostureNetwork:
+		action = containerPosture.NetPosture
+	default:
+		action = KubeArmorActionAllow
+	}
 
-		// Check process matches
-		for _, proc := range policy.MatchProcs {
-			if ev.Comm == proc {
-				return policy.Action, policy
-			}
+	// Specific rule matching takes precedence over container default posture
+	for _, r := range e.rules {
+		if r.PostureType == postureType && strings.HasPrefix(path, r.Path) {
+			return r.Action
 		}
 	}
 
-	return ActionKubeAllow, nil
+	return action
 }
 
-// AuditLog formats a KubeArmor audit record string.
-func (e *KubeArmorEngine) AuditLog(ev *Event, action KubeArmorAction, policy *KubeArmorPolicy) string {
-	if policy == nil {
-		return ""
+// RecordAuditLog appends an audit event entry.
+func (e *KubeArmorPolicyEngine) RecordAuditLog(logEntry string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.auditLogs = append(e.auditLogs, fmt.Sprintf("[%s] %s", fmt.Sprint(uint64(0)), logEntry))
+	if len(e.auditLogs) > 1000 {
+		e.auditLogs = e.auditLogs[1:]
 	}
-	return fmt.Sprintf("[KUBEARMOR %s] Policy='%s' PID=%d Comm='%s' File='%s' Severity=%s",
-		action.String(), policy.Name, ev.PID, ev.Comm, ev.Filename, policy.Severity)
 }

@@ -1,105 +1,158 @@
-// Package ebpf provides Inspektor Gadget tracer formatting and container metadata resolution.
+// Package ebpf provides Inspektor Gadget container tracing event decoding and pod enrichment.
 package ebpf
 
 import (
+	"encoding/binary"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 )
 
-// GadgetCategory represents Inspektor Gadget tracer categories.
+// GadgetCategory mirror of enum gadget_event_category (gadget_types.h)
 type GadgetCategory uint32
 
 const (
-	GadgetTraceExec    GadgetCategory = 1
-	GadgetTraceOpen    GadgetCategory = 2
-	GadgetTraceDNS     GadgetCategory = 3
-	GadgetTraceTCP     GadgetCategory = 4
-	GadgetTraceCap     GadgetCategory = 5
-	GadgetTraceSNI     GadgetCategory = 6
-	GadgetTraceTCPDrop GadgetCategory = 7
-	GadgetTraceMount   GadgetCategory = 8
-	GadgetTraceSignal  GadgetCategory = 9
-	GadgetTraceOOMKill GadgetCategory = 10
+	GadgetTypeTraceExec    GadgetCategory = 1
+	GadgetTypeTraceOpen    GadgetCategory = 2
+	GadgetTypeTraceDNS     GadgetCategory = 3
+	GadgetTypeTraceTCP     GadgetCategory = 4
+	GadgetTypeTraceCap     GadgetCategory = 5
+	GadgetTypeTraceSNI     GadgetCategory = 6
+	GadgetTypeTraceTCPDrop GadgetCategory = 7
+	GadgetTypeTraceMount   GadgetCategory = 8
+	GadgetTypeTraceSignal  GadgetCategory = 9
+	GadgetTypeTraceOOMKill GadgetCategory = 10
 )
 
-// String returns a human-readable gadget name.
 func (c GadgetCategory) String() string {
 	switch c {
-	case GadgetTraceExec:
-		return "trace_exec"
-	case GadgetTraceOpen:
-		return "trace_open"
-	case GadgetTraceDNS:
-		return "trace_dns"
-	case GadgetTraceTCP:
-		return "trace_tcp"
-	case GadgetTraceCap:
-		return "trace_capabilities"
-	case GadgetTraceSNI:
-		return "trace_sni"
-	case GadgetTraceTCPDrop:
-		return "trace_tcpdrop"
-	case GadgetTraceMount:
-		return "trace_mount"
-	case GadgetTraceSignal:
-		return "trace_signal"
-	case GadgetTraceOOMKill:
-		return "trace_oomkill"
+	case GadgetTypeTraceExec:
+		return "TRACE_EXEC"
+	case GadgetTypeTraceOpen:
+		return "TRACE_OPEN"
+	case GadgetTypeTraceDNS:
+		return "TRACE_DNS"
+	case GadgetTypeTraceTCP:
+		return "TRACE_TCP"
+	case GadgetTypeTraceCap:
+		return "TRACE_CAP"
+	case GadgetTypeTraceSNI:
+		return "TRACE_SNI"
+	case GadgetTypeTraceTCPDrop:
+		return "TRACE_TCPDROP"
+	case GadgetTypeTraceMount:
+		return "TRACE_MOUNT"
+	case GadgetTypeTraceSignal:
+		return "TRACE_SIGNAL"
+	case GadgetTypeTraceOOMKill:
+		return "TRACE_OOMKILL"
 	default:
-		return "gadget_unknown"
+		return "UNKNOWN_GADGET"
 	}
 }
 
-// GadgetRecord represents an Inspektor Gadget formatted telemetry record.
-type GadgetRecord struct {
-	Timestamp     time.Duration  `json:"timestamp"`
-	Gadget        string         `json:"gadget"`
-	PID           uint32         `json:"pid"`
-	PPID          uint32         `json:"ppid"`
-	UID           uint32         `json:"uid"`
-	Comm          string         `json:"comm"`
-	ContainerName string         `json:"container_name,omitempty"`
-	PodName       string         `json:"pod_name,omitempty"`
-	Namespace     string         `json:"namespace,omitempty"`
-	Details       string         `json:"details"`
+// GadgetContainerMeta mirror of struct gadget_container_meta_t
+type GadgetContainerMeta struct {
+	CgroupID      uint64 `json:"cgroup_id"`
+	MntNSID       uint32 `json:"mnt_ns_id"`
+	PidNSID       uint32 `json:"pid_ns_id"`
+	ContainerName string `json:"container_name"`
+	PodName       string `json:"pod_name"`
+	Namespace     string `json:"namespace"`
 }
 
-// FormatGadgetRecord converts a core Event into an Inspektor Gadget record.
-func FormatGadgetRecord(ev *Event) *GadgetRecord {
-	if ev == nil {
-		return nil
+// GadgetEvent mirror of struct gadget_event_t
+type GadgetEvent struct {
+	Timestamp   time.Duration       `json:"timestamp_ns"`
+	Category    GadgetCategory      `json:"category"`
+	CategoryStr string              `json:"category_str"`
+	PID         uint32              `json:"pid"`
+	TID         uint32              `json:"tid"`
+	PPID        uint32              `json:"ppid"`
+	UID         uint32              `json:"uid"`
+	GID         uint32              `json:"gid"`
+	Container   GadgetContainerMeta `json:"container"`
+	Comm        string              `json:"comm"`
+	Payload     string              `json:"payload"`
+}
+
+// GadgetTracer manages container gadget event subscription and enrichment.
+type GadgetTracer struct {
+	mu           sync.RWMutex
+	containerMap map[uint64]*GadgetContainerMeta
+}
+
+// NewGadgetTracer initializes a new Inspektor Gadget container tracer.
+func NewGadgetTracer() *GadgetTracer {
+	return &GadgetTracer{
+		containerMap: make(map[uint64]*GadgetContainerMeta),
+	}
+}
+
+// ParseGadgetEvent parses a raw binary gadget_event_t struct.
+func ParseGadgetEvent(data []byte) (*GadgetEvent, error) {
+	if len(data) < 488 {
+		return nil, fmt.Errorf("gadget event data too short: %d bytes, expected >= 488", len(data))
 	}
 
-	record := &GadgetRecord{
-		Timestamp:     ev.Timestamp,
-		PID:           ev.PID,
-		PPID:          ev.PPID,
-		UID:           ev.UID,
-		Comm:          ev.Comm,
-		ContainerName: ev.ContainerID,
-		Namespace:     "default",
-	}
+	bo := binary.LittleEndian
+	tsNs := bo.Uint64(data[0:8])
+	category := bo.Uint32(data[8:12])
+	pid := bo.Uint32(data[12:16])
+	tid := bo.Uint32(data[16:20])
+	ppid := bo.Uint32(data[20:24])
+	uid := bo.Uint32(data[24:28])
+	gid := bo.Uint32(data[28:32])
 
-	switch ev.Type {
-	case EventTypeExec:
-		record.Gadget = GadgetTraceExec.String()
-		record.Details = fmt.Sprintf("execve %s (ppid=%d)", ev.Filename, ev.PPID)
-	case EventTypeFile:
-		record.Gadget = GadgetTraceOpen.String()
-		record.Details = fmt.Sprintf("file %s (op=%d)", ev.Filename, ev.FileOp)
-	case EventTypeNet:
-		record.Gadget = GadgetTraceTCP.String()
-		record.Details = fmt.Sprintf("tcp %s:%d -> %s:%d (proto=%d)", ev.SrcIP, ev.SrcPort, ev.DstIP, ev.DstPort, ev.Protocol)
-	case EventTypePriv:
-		record.Gadget = GadgetTraceCap.String()
-		record.Details = fmt.Sprintf("privilege mutation (syscall=%d)", ev.SyscallID)
-	case EventTypeMem:
-		record.Gadget = "trace_mem"
-		record.Details = fmt.Sprintf("memory modification (syscall=%d)", ev.SyscallID)
-	default:
-		record.Gadget = "trace_generic"
-		record.Details = fmt.Sprintf("event type %d", ev.Type)
-	}
+	cgroupID := bo.Uint64(data[32:40])
+	mntNS := bo.Uint32(data[40:44])
+	pidNS := bo.Uint32(data[44:48])
 
-	return record
+	cName := strings.TrimRight(string(data[48:112]), "\x00")
+	pName := strings.TrimRight(string(data[112:176]), "\x00")
+	nsName := strings.TrimRight(string(data[176:240]), "\x00")
+	comm := strings.TrimRight(string(data[240:256]), "\x00")
+	payload := strings.TrimRight(string(data[256:512]), "\x00")
+
+	catObj := GadgetCategory(category)
+
+	return &GadgetEvent{
+		Timestamp:   time.Duration(tsNs) * time.Nanosecond,
+		Category:    catObj,
+		CategoryStr: catObj.String(),
+		PID:         pid,
+		TID:         tid,
+		PPID:        ppid,
+		UID:         uid,
+		GID:         gid,
+		Container: GadgetContainerMeta{
+			CgroupID:      cgroupID,
+			MntNSID:       mntNS,
+			PidNSID:       pidNS,
+			ContainerName: strings.TrimSpace(cName),
+			PodName:       strings.TrimSpace(pName),
+			Namespace:     strings.TrimSpace(nsName),
+		},
+		Comm:    strings.TrimSpace(comm),
+		Payload: strings.TrimSpace(payload),
+	}, nil
+}
+
+// RegisterContainer registers container metadata for Cgroup enrichment.
+func (gt *GadgetTracer) RegisterContainer(meta *GadgetContainerMeta) {
+	if meta == nil || meta.CgroupID == 0 {
+		return
+	}
+	gt.mu.Lock()
+	defer gt.mu.Unlock()
+	gt.containerMap[meta.CgroupID] = meta
+}
+
+// LookupContainer retrieves cached Kubernetes container metadata by Cgroup ID.
+func (gt *GadgetTracer) LookupContainer(cgroupID uint64) (*GadgetContainerMeta, bool) {
+	gt.mu.RLock()
+	defer gt.mu.RUnlock()
+	meta, found := gt.containerMap[cgroupID]
+	return meta, found
 }

@@ -3,6 +3,8 @@ package ebpf
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 )
@@ -16,11 +18,22 @@ const (
 	PriorityLow    ProgramPriority = 1000
 )
 
+// PinMode defines bpfman map pinning strategies.
+type PinMode int
+
+const (
+	PinNone   PinMode = 0
+	PinByName PinMode = 1
+	PinCustom PinMode = 2
+)
+
 // ProgramSpec defines a bpfman managed eBPF program load specification.
 type ProgramSpec struct {
+	ID           uint32          `json:"id"`
 	Name         string          `json:"name"`
 	Type         string          `json:"type"`
 	Priority     ProgramPriority `json:"priority"`
+	PinMode      PinMode         `json:"pin_mode"`
 	AttachTarget string          `json:"attach_target"`
 	PinPath      string          `json:"pin_path,omitempty"`
 	Loaded       bool            `json:"loaded"`
@@ -28,14 +41,19 @@ type ProgramSpec struct {
 
 // BpfmanManager manages multi-probe attachment chains and map pinning lifecycles.
 type BpfmanManager struct {
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	programs map[string]*ProgramSpec
+	pinDir   string
 }
 
 // NewBpfmanManager creates a new bpfman manager instance.
-func NewBpfmanManager() *BpfmanManager {
+func NewBpfmanManager(pinDir string) *BpfmanManager {
+	if pinDir == "" {
+		pinDir = "/sys/fs/bpf/ebpf_ml"
+	}
 	return &BpfmanManager{
 		programs: make(map[string]*ProgramSpec),
+		pinDir:   pinDir,
 	}
 }
 
@@ -48,14 +66,18 @@ func (m *BpfmanManager) RegisterProgram(spec *ProgramSpec) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if spec.PinPath == "" && spec.PinMode == PinByName {
+		spec.PinPath = filepath.Join(m.pinDir, spec.Name)
+	}
+
 	m.programs[spec.Name] = spec
 	return nil
 }
 
 // GetOrderedChain returns programs sorted by priority ordering.
 func (m *BpfmanManager) GetOrderedChain() []*ProgramSpec {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
 	chain := make([]*ProgramSpec, 0, len(m.programs))
 	for _, p := range m.programs {
@@ -77,4 +99,19 @@ func (m *BpfmanManager) SetLoaded(name string, loaded bool) {
 	if p, exists := m.programs[name]; exists {
 		p.Loaded = loaded
 	}
+}
+
+// EnsurePinDir creates the BPF virtual filesystem pinning directory if missing.
+func (m *BpfmanManager) EnsurePinDir() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return os.MkdirAll(m.pinDir, 0755)
+}
+
+// GetProgram returns metadata for a registered bpfman program.
+func (m *BpfmanManager) GetProgram(name string) (*ProgramSpec, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	p, exists := m.programs[name]
+	return p, exists
 }

@@ -78,6 +78,7 @@ class UnifiedSystemOrchestrator:
         agent_listen: str = ":8900",
         api_port: int = REST_API_PORT,
         export_dataset: bool = False,
+        auto_build_bpf: bool = False,
     ):
         self.dry_run = dry_run
         self.no_agent = no_agent
@@ -86,6 +87,7 @@ class UnifiedSystemOrchestrator:
         self.agent_listen = agent_listen
         self.api_port = api_port
         self.export_dataset = export_dataset
+        self.auto_build_bpf = auto_build_bpf
 
         self.running = False
         self.agent_process: Optional[subprocess.Popen] = None
@@ -226,6 +228,8 @@ class UnifiedSystemOrchestrator:
             cmd.extend(["--bpf-dir", self.bpf_dir])
         if self.export_dataset:
             cmd.append("--export-dataset")
+        if self.auto_build_bpf:
+            cmd.append("--auto-build-bpf")
 
         logger.info("Spawning Go eBPF Agent background process: %s", " ".join(cmd))
         try:
@@ -450,6 +454,7 @@ def main():
     parser.add_argument("--listen-agent", type=str, default=":8900", help="Go eBPF Agent HTTP/WebSocket listen address")
     parser.add_argument("--port-api", type=int, default=REST_API_PORT, help="FastAPI REST API server listening port")
     parser.add_argument("--export-dataset", action="store_true", help="Enable continuous logging of raw telemetry to .jsonl dataset files")
+    parser.add_argument("--auto-build-bpf", action="store_true", help="Automatically re-compile .bpf.c probes if outdated or missing")
     parser.add_argument("--non-interactive", action="store_true", help="Run in headless daemon mode without interactive CLI console")
 
     args = parser.parse_args()
@@ -469,6 +474,7 @@ def main():
         agent_listen=args.listen_agent,
         api_port=args.port_api,
         export_dataset=args.export_dataset,
+        auto_build_bpf=args.auto_build_bpf,
     )
 
     # Register OS Signal Handlers

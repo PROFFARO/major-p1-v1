@@ -1,107 +1,105 @@
-// Package ebpf provides Sysmon for Linux Event ID translation and metadata formatting.
+// Package ebpf provides Sysmon for Linux Event ID translation and Windows-like security log generation.
 package ebpf
 
 import (
+	"encoding/binary"
 	"fmt"
+	"strings"
 	"time"
 )
 
-// SysmonEventID represents Sysmon for Linux Event IDs (1-23).
+// SysmonEventID mirror of enum sysmon_event_id (sysmon_events.h)
 type SysmonEventID uint32
 
 const (
 	SysmonProcessCreate       SysmonEventID = 1
-	SysmonFileTimeChange     SysmonEventID = 2
+	SysmonFileTimeChange      SysmonEventID = 2
 	SysmonNetworkConnect      SysmonEventID = 3
-	SysmonServiceStateChange SysmonEventID = 4
+	SysmonServiceStateChange  SysmonEventID = 4
 	SysmonProcessTerminate    SysmonEventID = 5
 	SysmonDriverLoad          SysmonEventID = 6
 	SysmonImageLoad           SysmonEventID = 7
-	SysmonCreateRemoteThread  SysmonEventID = 8
+	SysmonCreateRemoteThread SysmonEventID = 8
 	SysmonRawAccessRead       SysmonEventID = 9
 	SysmonProcessAccess       SysmonEventID = 10
 	SysmonFileCreate          SysmonEventID = 11
+	SysmonRegCreateDelete     SysmonEventID = 12
+	SysmonRegSetValue         SysmonEventID = 13
+	SysmonRegRename           SysmonEventID = 14
+	SysmonCreateStreamHash    SysmonEventID = 15
+	SysmonServiceConfigChange SysmonEventID = 16
 	SysmonPipeCreate          SysmonEventID = 17
 	SysmonPipeConnect         SysmonEventID = 18
-	SysmonDNSQuery            SysmonEventID = 22
+	SysmonWmiEvent            SysmonEventID = 19
+	SysmonDnsQuery            SysmonEventID = 22
 	SysmonFileDelete          SysmonEventID = 23
 )
 
-// SysmonEvent represents a converted Sysmon telemetry audit event.
-type SysmonEvent struct {
-	EventID        SysmonEventID `json:"event_id"`
-	EventName      string        `json:"event_name"`
-	UtcTime        string        `json:"utc_time"`
-	ProcessGuid    string        `json:"process_guid"`
-	ProcessId      uint32        `json:"process_id"`
-	Image          string        `json:"image"`
-	CommandLine    string        `json:"command_line,omitempty"`
-	User           string        `json:"user"`
-	ParentProcessId uint32       `json:"parent_process_id"`
-	ParentImage    string        `json:"parent_image,omitempty"`
-	SourceIp       string        `json:"source_ip,omitempty"`
-	SourcePort     uint16        `json:"source_port,omitempty"`
-	DestinationIp  string        `json:"destination_ip,omitempty"`
-	DestinationPort uint16       `json:"destination_port,omitempty"`
-	TargetFilename string        `json:"target_filename,omitempty"`
+func (e SysmonEventID) String() string {
+	switch e {
+	case SysmonProcessCreate:
+		return "ProcessCreate"
+	case SysmonFileTimeChange:
+		return "FileTimeChange"
+	case SysmonNetworkConnect:
+		return "NetworkConnect"
+	case SysmonProcessTerminate:
+		return "ProcessTerminate"
+	case SysmonDriverLoad:
+		return "DriverLoad"
+	case SysmonImageLoad:
+		return "ImageLoad"
+	case SysmonCreateRemoteThread:
+		return "CreateRemoteThread"
+	case SysmonFileCreate:
+		return "FileCreate"
+	case SysmonDnsQuery:
+		return "DnsQuery"
+	case SysmonFileDelete:
+		return "FileDelete"
+	default:
+		return fmt.Sprintf("SysmonEvent_%d", e)
+	}
 }
 
-// ConvertToSysmon translates a core kernel telemetry Event into a standard Sysmon record.
-func ConvertToSysmon(ev *Event) *SysmonEvent {
-	if ev == nil {
-		return nil
+// SysmonEventHeader mirror of struct sysmon_event_header_t
+type SysmonEventHeader struct {
+	EventID         SysmonEventID `json:"event_id"`
+	EventName       string        `json:"event_name"`
+	TimestampNs     time.Duration `json:"timestamp_ns"`
+	ProcessID       uint32        `json:"process_id"`
+	ParentProcessID uint32        `json:"parent_process_id"`
+	UserID          uint32        `json:"user_id"`
+	ImagePath       string        `json:"image_path"`
+	CommandLine     string        `json:"command_line"`
+}
+
+// TranslateSysmonEvent converts a raw byte slice into a Sysmon security event log structure.
+func TranslateSysmonEvent(data []byte) (*SysmonEventHeader, error) {
+	if len(data) < 532 {
+		return nil, fmt.Errorf("sysmon event data too short: %d bytes", len(data))
 	}
 
-	sysEvent := &SysmonEvent{
-		UtcTime:         time.Now().UTC().Format(time.RFC3339Nano),
-		ProcessId:       ev.PID,
-		ParentProcessId: ev.PPID,
-		Image:           ev.ExePath,
-		CommandLine:     ev.Cmdline,
-		User:            fmt.Sprintf("UID:%d", ev.UID),
-		ParentImage:     ev.ParentComm,
-	}
+	bo := binary.LittleEndian
+	eventID := bo.Uint32(data[0:4])
+	tsNs := bo.Uint64(data[4:12])
+	pid := bo.Uint32(data[12:16])
+	ppid := bo.Uint32(data[16:20])
+	uid := bo.Uint32(data[20:24])
 
-	if sysEvent.Image == "" {
-		sysEvent.Image = ev.Comm
-	}
+	imgPath := strings.TrimRight(string(data[24:280]), "\x00")
+	cmdLine := strings.TrimRight(string(data[280:536]), "\x00")
 
-	switch ev.Type {
-	case EventTypeExec:
-		sysEvent.EventID = SysmonProcessCreate
-		sysEvent.EventName = "ProcessCreate"
-	case EventTypeExit:
-		sysEvent.EventID = SysmonProcessTerminate
-		sysEvent.EventName = "ProcessTerminate"
-	case EventTypeNet:
-		sysEvent.EventID = SysmonNetworkConnect
-		sysEvent.EventName = "NetworkConnect"
-		sysEvent.SourceIp = ev.SrcIP
-		sysEvent.SourcePort = ev.SrcPort
-		sysEvent.DestinationIp = ev.DstIP
-		sysEvent.DestinationPort = ev.DstPort
-	case EventTypeFile:
-		if ev.FileOp == FileOpDelete {
-			sysEvent.EventID = SysmonFileDelete
-			sysEvent.EventName = "FileDelete"
-		} else {
-			sysEvent.EventID = SysmonFileCreate
-			sysEvent.EventName = "FileCreate"
-		}
-		sysEvent.TargetFilename = ev.Filename
-	case EventTypeMem:
-		sysEvent.EventID = SysmonCreateRemoteThread
-		sysEvent.EventName = "CreateRemoteThread"
-	case EventTypePriv:
-		sysEvent.EventID = SysmonDriverLoad
-		sysEvent.EventName = "DriverLoad"
-	default:
-		sysEvent.EventID = SysmonProcessAccess
-		sysEvent.EventName = "ProcessAccess"
-	}
+	sysIDObj := SysmonEventID(eventID)
 
-	sysEvent.ProcessGuid = fmt.Sprintf("{%08x-%04x-%04x-%04x-%012x}",
-		ev.PID, ev.PPID, ev.UID, ev.CgroupID, ev.Timestamp)
-
-	return sysEvent
+	return &SysmonEventHeader{
+		EventID:         sysIDObj,
+		EventName:       sysIDObj.String(),
+		TimestampNs:     time.Duration(tsNs) * time.Nanosecond,
+		ProcessID:       pid,
+		ParentProcessID: ppid,
+		UserID:          uid,
+		ImagePath:       strings.TrimSpace(imgPath),
+		CommandLine:     strings.TrimSpace(cmdLine),
+	}, nil
 }
