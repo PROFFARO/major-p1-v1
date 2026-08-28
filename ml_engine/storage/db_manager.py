@@ -178,37 +178,54 @@ class DuckDBManager:
             ))
 
         with self._lock:
-            self.conn.executemany("""
-                INSERT INTO telemetry_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, rows)
+            self._ensure_conn()
+            if self.conn is not None:
+                self.conn.executemany("""
+                    INSERT INTO telemetry_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, rows)
         return len(rows)
 
     def insert_feature_window(self, record: FeatureWindowRecord):
         """Insert a 12-dim feature window record."""
         with self._lock:
-            self.conn.execute("""
-                INSERT INTO feature_windows VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                record.pid,
-                record.window_start_ns,
-                record.window_end_ns,
-                record.event_count,
-                record.vector,
-                record.rf_prediction,
-                record.xgb_prediction,
-                record.iso_score,
-                record.agreed_threat,
-                record.confidence,
-                record.created_at,
-            ))
+            self._ensure_conn()
+            if self.conn is not None:
+                self.conn.execute("""
+                    INSERT INTO feature_windows VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    record.pid,
+                    record.window_start_ns,
+                    record.window_end_ns,
+                    record.event_count,
+                    record.vector,
+                    record.rf_prediction,
+                    record.xgb_prediction,
+                    record.iso_score,
+                    record.agreed_threat,
+                    record.confidence,
+                    record.created_at,
+                ))
+
+
+    def _ensure_conn(self):
+        if self.conn is None:
+            try:
+                self.conn = duckdb.connect(str(self.db_path))
+            except Exception:
+                try:
+                    self.conn = duckdb.connect(str(self.db_path), read_only=True)
+                except Exception:
+                    self.conn = duckdb.connect(":memory:")
 
     def query_sql(self, sql: str, limit: int = 100) -> List[Dict[str, Any]]:
         """Run an arbitrary SQL query against DuckDB and return list of dict rows."""
         with self._lock:
+            self._ensure_conn()
             res = self.conn.execute(sql).fetchdf()
             if len(res) > limit:
                 res = res.head(limit)
             return res.to_dict(orient="records")
+
 
     def export_query(self, sql: str, format_type: str, output_path: Path) -> str:
         """Export DuckDB SQL query results to CSV, Parquet, or JSON file."""

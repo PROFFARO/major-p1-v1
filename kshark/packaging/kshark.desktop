@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=KShark
+GenericName=eBPF Security Observability & Threat Analyzer
+Comment=Native Linux Kernel Threat & Anomaly Detection via eBPF and Machine Learning
+Exec=kshark %f
+Icon=/home/proffaro/Documents/major-p1-v1/kshark/kshark/resources/icons/app_icon.svg
+Terminal=false
+Categories=System;Security;Network;Monitor;
+Keywords=eBPF;security;kernel;threat;ML;wireshark;forensics;
+MimeType=application/x-duckdb;application/x-kshark;
+StartupWMClass=KShark

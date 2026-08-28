@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kshark"
+version = "1.0.0"
+description = "Native Linux eBPF Security Observability & Threat Detection Platform (Wireshark-styled Qt6 GUI)"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    { name = "Security Research Team" }
+]
+dependencies = [
+    "PyQt6>=6.4.0",
+    "pyqtgraph>=0.13.0",
+    "duckdb>=0.9.0",
+    "websocket-client>=1.6.0",
+    "numpy>=1.22.0",
+    "rich>=13.0.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+kshark = "kshark.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kshark*"]
