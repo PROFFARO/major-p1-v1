@@ -93,6 +93,16 @@ class KSharkSearchFrame(QFrame):
         case_sens = self.cb_case.isChecked()
         self.findTriggered.emit(query, stype, direction, case_sens)
 
+    def _on_find_prev(self):
+        """Find previous — same as find next but forces direction to 'up'."""
+        query = self.search_input.text().strip()
+        if not query:
+            return
+        stype = self._get_search_type()
+        case_sens = self.cb_case.isChecked()
+        self.findTriggered.emit(query, stype, "up", case_sens)
+
     def _on_cancel(self):
         self.hide()
         self.cancelTriggered.emit()
+

@@ -68,14 +68,19 @@ class BackendBridge(QObject):
                 db_manager=self.db_mgr,
             )
 
-            # Hook raw event ingestion to emit to KShark UI
-            orig_ingest = self.engine.ingest_event
-            def _hooked_ingest(event: dict):
-                res = orig_ingest(event)
-                if self.is_capturing:
-                    self._on_telemetry_event(event, from_engine=True)
-                return res
-            self.engine.ingest_event = _hooked_ingest
+            # Route Go agent WebSocket events into _on_telemetry_event
+            orig_on_message = self.engine._on_message
+            def _hooked_on_message(ws, msg_str: str):
+                try:
+                    import json
+                    ev = json.loads(msg_str)
+                    if self.is_capturing:
+                        self._on_telemetry_event(ev, from_engine=True)
+                except Exception:
+                    pass
+                orig_on_message(ws, msg_str)
+
+            self.engine._on_message = _hooked_on_message
 
         except Exception as e:
             logger.warning("Backend initialization: %s", e)
@@ -83,12 +88,80 @@ class BackendBridge(QObject):
         # Initialize native Linux OS Telemetry Collector
         self.os_collector = LiveOSTelemetryCollector(on_event_callback=self._on_telemetry_event)
 
+
     def _on_telemetry_event(self, event: dict, from_engine: bool = False):
-        """Process incoming authentic OS / eBPF event and emit to GUI."""
+        """Process incoming authentic OS / eBPF event through ML models and Behavioral Engine."""
         if not self.is_capturing:
             return
 
-        # If event came from OS collector, pass it through ML engine for sliding window extraction & Falco rules
+        pid = event.get("pid", 0)
+
+        # 1. Ingest into PID Streaming Feature Window
+        live_vec = None
+        if self.engine and self.engine.extractor and pid > 0:
+            try:
+                ts = event.get("timestamp_ns", int(time.time() * 1e9))
+                if pid not in self.engine.extractor.windows:
+                    from ml_engine.preprocessing.feature_extractor import PIDWindow
+                    self.engine.extractor.windows[pid] = PIDWindow(pid, ts)
+                self.engine.extractor.windows[pid].ingest(event)
+                live_vec = self.engine.extractor.get_live_vector(pid)
+            except Exception as e:
+                logger.debug("Feature extraction error: %s", e)
+
+        # 2. Evaluate Live ML Multi-Model Ensemble (Random Forest + XGBoost + Isolation Forest)
+        ml_threat = "BENIGN"
+        ml_conf = 0.0
+        ml_info = ""
+
+        if live_vec is not None and self.detector and self.detector.loaded:
+            try:
+                res = self.detector.predict_with_consensus(live_vec)
+                rf_res = res.get("rf_result", {})
+                xgb_res = res.get("xgb_result", {})
+                rf_threat = rf_res.get("threat_name", "BENIGN") if isinstance(rf_res, dict) else "BENIGN"
+                xgb_threat = xgb_res.get("threat_name", "BENIGN") if isinstance(xgb_res, dict) else "BENIGN"
+                agreed = res.get("agreed_threat", "BENIGN")
+
+                if agreed != "BENIGN" or res.get("is_anomaly") or rf_threat != "BENIGN" or xgb_threat != "BENIGN":
+                    chosen_threat = agreed if agreed != "BENIGN" else (rf_threat if rf_threat != "BENIGN" else xgb_threat)
+                    ml_threat = chosen_threat
+                    ml_conf = float(res.get("confidence", 0.90))
+                    ml_info = f"ML Dual-Ensemble: {chosen_threat} (RF: {rf_threat}, XGB: {xgb_threat})"
+            except Exception as e:
+                logger.debug("ML detector evaluation error: %s", e)
+
+        # 3. Evaluate Behavioral Rules Engine
+        rule_threat = "BENIGN"
+        rule_info = ""
+        if self.behavioral_engine:
+            try:
+                rule_matches = self.behavioral_engine.evaluate_event(event)
+                if rule_matches:
+                    match = rule_matches[0]
+                    rule_threat = match.get("rule_name", "BEHAVIORAL_THREAT")
+                    rule_info = f"MITRE {match.get('mitre_id', '')} - {match.get('description', '')}"
+            except Exception as e:
+                logger.debug("Behavioral rule evaluation error: %s", e)
+
+        # 4. Synthesize Dual Consensus Threat Decision
+        if ml_threat != "BENIGN" and rule_threat != "BENIGN":
+            event["threat_name"] = ml_threat
+            event["confidence"] = 1.0
+            event["detection_source"] = "dual_ensemble_ml"
+            event["forensic_info"] = f"{ml_info} | {rule_info}"
+        elif ml_threat != "BENIGN":
+            event["threat_name"] = ml_threat
+            event["confidence"] = ml_conf
+            event["detection_source"] = "dual_ensemble_ml"
+            event["forensic_info"] = ml_info
+        elif rule_threat != "BENIGN":
+            event["threat_name"] = rule_threat
+            event["confidence"] = 0.95
+            event["detection_source"] = "behavioral_rule"
+            event["forensic_info"] = rule_info
+
+        # 5. Database Batch Recording & Process DAG
         if not from_engine and self.engine:
             try:
                 self.engine.ingest_event(event)
@@ -107,8 +180,14 @@ class BackendBridge(QObject):
         self.eventReceived.emit(event)
 
 
+
+
     def _handle_detection(self, alert: dict):
-        """Processes ML / Behavioral detection alert and injects into Event Table."""
+        """Processes ML sliding window anomaly detection alert and injects into Event Table."""
+        # If alert is from behavioral rule, the raw event was already tagged in _on_telemetry_event
+        if alert.get("detection_source") == "behavioral_rule":
+            return
+
         threat_name = alert.get("threat_name") or alert.get("threat_type") or alert.get("rule_name") or "SUSPICIOUS_ANOMALY"
         pid = alert.get("pid", 0)
         comm = alert.get("comm") or "unknown"
@@ -123,19 +202,21 @@ class BackendBridge(QObject):
             "comm": comm,
             "syscall": "SECURITY_ALERT",
             "syscall_id": 999,
-            "file_path": alert.get("file_path") or alert.get("target") or alert.get("description") or f"🚨 {threat_name}",
+            "file_path": alert.get("file_path") or alert.get("target") or alert.get("description") or f"[ALERT] {threat_name}",
             "dst_ip": alert.get("dst_ip", ""),
             "dst_port": alert.get("dst_port", 0),
             "container_name": alert.get("container_name") or "container",
             "threat_name": threat_name,
             "confidence": conf,
-            "forensic_info": alert.get("details") or alert.get("description") or f"MITRE Rule: {threat_name}",
+            "forensic_info": alert.get("details") or alert.get("description") or f"ML Anomaly: {threat_name}",
+            "detection_source": "dual_ensemble_ml",
         }
 
         self._threat_count += 1
         self._total_events += 1
         self.threatDetected.emit(alert)
         self.eventReceived.emit(alert_event)
+
 
 
     def start_capture(self, custom_ws_url: str = ""):

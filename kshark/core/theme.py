@@ -12,20 +12,23 @@ from typing import Dict, Any
 class ThemeManager(QObject):
     """
     Centralized theme manager for KShark.
-    Supports KShark Cloud Teal (Light/Dark) and Classic Wireshark palettes.
+    Provides two unified themes: Wireshark Modern Dark (Global Default) and Wireshark Light.
     """
 
     themeChanged = pyqtSignal(str)  # Emits current theme name
     _instance = None
 
-    THEME_KSHARK_LIGHT = "kshark_light"
-    THEME_KSHARK_DARK = "kshark_dark"
-    THEME_WIRESHARK_CLASSIC = "wireshark_classic"
     THEME_WIRESHARK_DARK = "wireshark_dark"
+    THEME_WIRESHARK_LIGHT = "wireshark_light"
+
+    # Compatibility aliases
+    THEME_KSHARK_DARK = THEME_WIRESHARK_DARK
+    THEME_KSHARK_LIGHT = THEME_WIRESHARK_LIGHT
+    THEME_WIRESHARK_CLASSIC = THEME_WIRESHARK_LIGHT
 
     def __init__(self):
         super().__init__()
-        self._current_theme = self.THEME_KSHARK_DARK
+        self._current_theme = self.THEME_WIRESHARK_DARK
 
     @classmethod
     def instance(cls) -> 'ThemeManager':
@@ -42,13 +45,13 @@ class ThemeManager(QObject):
         return "dark" in cls.instance()._current_theme
 
     def set_theme(self, theme_name: str):
-        if theme_name not in (
-            self.THEME_KSHARK_LIGHT,
-            self.THEME_KSHARK_DARK,
-            self.THEME_WIRESHARK_CLASSIC,
-            self.THEME_WIRESHARK_DARK,
-        ):
-            theme_name = self.THEME_KSHARK_DARK
+        if theme_name in ("kshark_light", "wireshark_classic"):
+            theme_name = self.THEME_WIRESHARK_LIGHT
+        elif theme_name in ("kshark_dark",):
+            theme_name = self.THEME_WIRESHARK_DARK
+
+        if theme_name not in (self.THEME_WIRESHARK_DARK, self.THEME_WIRESHARK_LIGHT):
+            theme_name = self.THEME_WIRESHARK_DARK
 
         self._current_theme = theme_name
         app = QApplication.instance()
@@ -59,77 +62,90 @@ class ThemeManager(QObject):
 
     def get_palette_colors(self, theme_name: str = "") -> Dict[str, str]:
         t = theme_name or self._current_theme
-        if t == self.THEME_KSHARK_LIGHT:
+        if t in (self.THEME_WIRESHARK_LIGHT, "kshark_light", "wireshark_classic"):
             return {
-                "bg_window": "#F0F4F5",
+                "bg_window": "#F1F5F9",
                 "bg_base": "#FFFFFF",
-                "bg_alt": "#E8EFF1",
-                "fg_text": "#102A30",
-                "fg_muted": "#5A7076",
-                "brand_primary": "#0E9AA7",
-                "brand_deep": "#0A2A32",
-                "border": "#D0DCDD",
-                "selection_bg": "#0E9AA7",
-                "selection_fg": "#FFFFFF",
-                "filter_valid_bg": "#D4F4D4",
-                "filter_invalid_bg": "#FFD4D4",
-                "accent_success": "#0EA773",
-                "accent_danger": "#C92A2A",
+                "bg_alt": "#F8FAFC",
+                "bg_section": "#F1F5F9",
+                "bg_input": "#FFFFFF",
+                "fg_text": "#0F172A",
+                "fg_muted": "#475569",
+                "fg_bright": "#0284C7",
+                "brand_primary": "#0284C7",
+                "brand_deep": "#0369A1",
+                "border": "#CBD5E1",
+                "selection_bg": "#BAE6FD",
+                "selection_fg": "#0F172A",
+                "filter_valid_bg": "#DCFCE7",
+                "filter_valid_border": "#86EFAC",
+                "filter_invalid_bg": "#FEE2E2",
+                "filter_invalid_border": "#FCA5A5",
+                "accent_success": "#16A34A",
+                "accent_danger": "#DC2626",
+                "green_btn": "#16A34A",
+                "green_btn_hover": "#15803D",
+                "green_btn_border": "#166534",
+                "card_threats_bg": "#FEE2E2",
+                "card_threats_fg": "#991B1B",
+                "card_threats_border": "#FCA5A5",
+                "card_warnings_bg": "#FEF3C7",
+                "card_warnings_fg": "#92400E",
+                "card_warnings_border": "#FCD34D",
+                "card_errors_bg": "#FEF9C3",
+                "card_errors_fg": "#854D0E",
+                "card_errors_border": "#FDE047",
+                "card_notes_bg": "#E0F2FE",
+                "card_notes_fg": "#0369A1",
+                "card_notes_border": "#BAE6FD",
             }
-        elif t == self.THEME_KSHARK_DARK:
+        else:  # WIRESHARK_DARK (Global Default)
             return {
-                "bg_window": "#121E22",
-                "bg_base": "#182428",
-                "bg_alt": "#1F2E34",
-                "fg_text": "#D8E8EC",
-                "fg_muted": "#8A9EA4",
+                "bg_window": "#181D20",
+                "bg_base": "#1E2429",
+                "bg_alt": "#252D33",
+                "bg_section": "#141A1D",
+                "bg_input": "#111618",
+                "fg_text": "#D8E2E6",
+                "fg_muted": "#8B9BA2",
+                "fg_bright": "#FFFFFF",
                 "brand_primary": "#2BC1CF",
-                "brand_deep": "#03161A",
-                "border": "#283C42",
-                "selection_bg": "#1A525D",
+                "brand_deep": "#0C4A6E",
+                "border": "#2E3A40",
+                "selection_bg": "#1E4856",
                 "selection_fg": "#FFFFFF",
-                "filter_valid_bg": "#133825",
-                "filter_invalid_bg": "#4A1818",
-                "accent_success": "#2BD49B",
-                "accent_danger": "#F05252",
-            }
-        elif t == self.THEME_WIRESHARK_CLASSIC:
-            return {
-                "bg_window": "#EFEFEF",
-                "bg_base": "#FFFFFF",
-                "bg_alt": "#F5F5F5",
-                "fg_text": "#000000",
-                "fg_muted": "#666666",
-                "brand_primary": "#204A87",
-                "brand_deep": "#10284A",
-                "border": "#CCCCCC",
-                "selection_bg": "#3072CC",
-                "selection_fg": "#FFFFFF",
-                "filter_valid_bg": "#AFF8AF",
-                "filter_invalid_bg": "#FFB0AF",
-                "accent_success": "#4E9A06",
-                "accent_danger": "#CC0000",
-            }
-        else:  # WIRESHARK_DARK
-            return {
-                "bg_window": "#1E1E1E",
-                "bg_base": "#252526",
-                "bg_alt": "#2D2D2D",
-                "fg_text": "#CCCCCC",
-                "fg_muted": "#888888",
-                "brand_primary": "#3B82F6",
-                "brand_deep": "#1E3A8A",
-                "border": "#3C3C3C",
-                "selection_bg": "#2A4068",
-                "selection_fg": "#FFFFFF",
-                "filter_valid_bg": "#1E3D1E",
-                "filter_invalid_bg": "#4D1A1A",
-                "accent_success": "#10B981",
+                "filter_valid_bg": "#143828",
+                "filter_valid_border": "#22C55E",
+                "filter_invalid_bg": "#4D1B1B",
+                "filter_invalid_border": "#EF4444",
+                "accent_success": "#22C55E",
                 "accent_danger": "#EF4444",
+                "green_btn": "#117A4E",
+                "green_btn_hover": "#14925E",
+                "green_btn_border": "#18A86A",
+                "card_threats_bg": "#3A1414",
+                "card_threats_fg": "#FF7070",
+                "card_threats_border": "#782626",
+                "card_warnings_bg": "#3A2510",
+                "card_warnings_fg": "#FFA850",
+                "card_warnings_border": "#784A1A",
+                "card_errors_bg": "#383514",
+                "card_errors_fg": "#FFE066",
+                "card_errors_border": "#786C1A",
+                "card_notes_bg": "#12283A",
+                "card_notes_fg": "#66B8FF",
+                "card_notes_border": "#1A4D78",
             }
 
     def get_stylesheet(self, theme_name: str = "") -> str:
         c = self.get_palette_colors(theme_name)
+        is_dark = "dark" in (theme_name or self._current_theme)
+
+        tab_bg = c['bg_window']
+        tab_selected_bg = c['bg_base']
+        tab_fg = c['fg_muted']
+        tab_selected_fg = c['brand_primary'] if is_dark else c['fg_text']
+
         return f"""
         QMainWindow, QDialog, QWidget {{
             background-color: {c['bg_window']};
@@ -186,6 +202,7 @@ class ThemeManager(QObject):
             border-radius: 3px;
             padding: 3px;
             margin: 1px;
+            color: {c['fg_text']};
         }}
         QToolButton:hover {{
             background-color: {c['bg_alt']};
@@ -218,6 +235,33 @@ class ThemeManager(QObject):
             font-size: 8.5pt;
         }}
 
+        QTabWidget::pane {{
+            border: 1px solid {c['border']};
+            background-color: {c['bg_base']};
+            top: -1px;
+        }}
+        QTabBar::tab {{
+            background-color: {tab_bg};
+            color: {tab_fg};
+            border: 1px solid {c['border']};
+            border-bottom: none;
+            padding: 4px 10px;
+            margin-right: 2px;
+            border-top-left-radius: 3px;
+            border-top-right-radius: 3px;
+            font-weight: bold;
+            font-size: 8pt;
+        }}
+        QTabBar::tab:selected {{
+            background-color: {tab_selected_bg};
+            color: {tab_selected_fg};
+            border-bottom: 1px solid {tab_selected_bg};
+        }}
+        QTabBar::tab:hover:!selected {{
+            background-color: {c['bg_alt']};
+            color: {c['fg_text']};
+        }}
+
         QSplitter::handle {{
             background-color: {c['border']};
         }}
@@ -248,13 +292,13 @@ class ThemeManager(QObject):
 
         QScrollBar:vertical {{
             background: {c['bg_window']};
-            width: 12px;
+            width: 10px;
             margin: 0px;
         }}
         QScrollBar::handle:vertical {{
             background: {c['border']};
             min-height: 20px;
-            border-radius: 4px;
+            border-radius: 3px;
             margin: 2px;
         }}
         QScrollBar::handle:vertical:hover {{
@@ -266,13 +310,13 @@ class ThemeManager(QObject):
 
         QScrollBar:horizontal {{
             background: {c['bg_window']};
-            height: 12px;
+            height: 10px;
             margin: 0px;
         }}
         QScrollBar::handle:horizontal {{
             background: {c['border']};
             min-width: 20px;
-            border-radius: 4px;
+            border-radius: 3px;
             margin: 2px;
         }}
         QScrollBar::handle:horizontal:hover {{
@@ -296,9 +340,10 @@ class ThemeManager(QObject):
         """
 
 
-def get_monospace_font(size: int = 9) -> QFont:
+def get_monospace_font(size: int = 9, bold: bool = False) -> QFont:
     """Returns platform-optimized monospace font for packet and hex views."""
-    font = QFont("Monospace", size)
+    pt_size = max(6, int(round(size)))
+    font = QFont("Monospace", pt_size)
     font.setStyleHint(QFont.StyleHint.Monospace)
     font.setFamilies([
         "Liberation Mono",
@@ -308,12 +353,15 @@ def get_monospace_font(size: int = 9) -> QFont:
         "Courier New",
         "Monospace",
     ])
+    if bold:
+        font.setBold(True)
     return font
 
 
 def get_ui_font(size: int = 9, bold: bool = False) -> QFont:
     """Returns platform-optimized standard UI font."""
-    font = QFont("Sans-Serif", size)
+    pt_size = max(6, int(round(size)))
+    font = QFont("Sans-Serif", pt_size)
     font.setFamilies([
         "-apple-system",
         "Segoe UI",
@@ -325,3 +373,4 @@ def get_ui_font(size: int = 9, bold: bool = False) -> QFont:
     if bold:
         font.setBold(True)
     return font
+

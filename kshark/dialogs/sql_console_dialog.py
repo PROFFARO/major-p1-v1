@@ -1,5 +1,5 @@
 """
-KShark Interactive DuckDB SQL Query Console Dialog.
+KShark Interactive SQL Query Console Dialog (DuckDB / SQLite Columnar Engine).
 """
 
 from PyQt6.QtWidgets import (
@@ -7,19 +7,28 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView
 )
 from PyQt6.QtCore import Qt
-import duckdb
+import sqlite3
 
-from kshark.core.theme import get_monospace_font
+try:
+    import duckdb
+    _HAS_DUCKDB = True
+except ImportError:
+    duckdb = None
+    _HAS_DUCKDB = False
+
+from kshark.core.theme import get_monospace_font, get_ui_font
 
 
 class SQLConsoleDialog(QDialog):
     """
-    Interactive DuckDB SQL query interface.
+    Interactive SQL query interface for live telemetry events.
+    Uses DuckDB if available, otherwise falls back to SQLite in-memory engine.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("KShark · DuckDB SQL Console")
+        engine_name = "DuckDB" if _HAS_DUCKDB else "SQLite"
+        self.setWindowTitle(f"KShark · {engine_name} SQL Console")
         self.resize(750, 480)
         self._init_ui()
 
@@ -28,16 +37,18 @@ class SQLConsoleDialog(QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(10)
 
-        layout.addWidget(QLabel("Execute DuckDB SQL Analytics on telemetry events:"))
+        engine_desc = "DuckDB (Columnar OLAP)" if _HAS_DUCKDB else "SQLite (In-Memory Engine)"
+        layout.addWidget(QLabel(f"Execute SQL Analytics on live telemetry events (Engine: <b>{engine_desc}</b>):"))
 
         self.query_editor = QTextEdit(self)
         self.query_editor.setFont(get_monospace_font(size=9))
-        self.query_editor.setPlainText("SELECT comm, count(*) as event_count FROM telemetry_events GROUP BY comm ORDER BY event_count DESC LIMIT 10;")
+        self.query_editor.setPlainText("SELECT comm, count(*) as event_count FROM events GROUP BY comm ORDER BY event_count DESC LIMIT 10;")
         self.query_editor.setMaximumHeight(80)
         layout.addWidget(self.query_editor)
 
         btn_bar = QHBoxLayout()
         self.btn_run = QPushButton("▶ Run Query", self)
+        self.btn_run.setFont(get_ui_font(size=8.5, bold=True))
         self.btn_run.clicked.connect(self._run_query)
         btn_bar.addWidget(self.btn_run)
         btn_bar.addStretch(1)
@@ -45,11 +56,13 @@ class SQLConsoleDialog(QDialog):
 
         self.table = QTableWidget(self)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.setFont(get_monospace_font(size=8.5))
         layout.addWidget(self.table, stretch=1)
 
         btn_close_bar = QHBoxLayout()
         btn_close_bar.addStretch(1)
         btn_close = QPushButton("Close", self)
+        btn_close.setFont(get_ui_font(size=8.5))
         btn_close.clicked.connect(self.accept)
         btn_close_bar.addWidget(btn_close)
         layout.addLayout(btn_close_bar)
@@ -60,19 +73,72 @@ class SQLConsoleDialog(QDialog):
             return
 
         try:
-            conn = duckdb.connect(":memory:")
-            # Sample virtual table if database is in-memory
-            conn.execute("CREATE TABLE telemetry_events (comm VARCHAR, pid INT, syscall VARCHAR);")
-            conn.execute("INSERT INTO telemetry_events VALUES ('python3', 1001, 'execve'), ('curl', 1002, 'openat'), ('firefox', 1003, 'connect');")
-            df = conn.execute(sql).df()
+            # ── Retrieve actual captured events from parent window ──
+            events = []
+            parent = self.parent()
+            if parent is not None and hasattr(parent, "table_model"):
+                events = list(parent.table_model._events)
 
-            self.table.setRowCount(len(df))
-            self.table.setColumnCount(len(df.columns))
-            self.table.setHorizontalHeaderLabels([str(c) for c in df.columns])
+            if not events:
+                self.table.setRowCount(1)
+                self.table.setColumnCount(1)
+                self.table.setHorizontalHeaderLabels(["Info"])
+                self.table.setItem(0, 0, QTableWidgetItem(
+                    "No events captured — start a live capture or open a file first."))
+                return
 
-            for r_idx, row in df.iterrows():
-                for c_idx, val in enumerate(row):
-                    self.table.setItem(r_idx, c_idx, QTableWidgetItem(str(val)))
+            if _HAS_DUCKDB:
+                import pandas as pd
+                df = pd.DataFrame(events)
+                conn = duckdb.connect(":memory:")
+                conn.register("events", df)
+                result = conn.execute(sql).df()
+
+                self.table.setRowCount(len(result))
+                self.table.setColumnCount(len(result.columns))
+                self.table.setHorizontalHeaderLabels([str(c) for c in result.columns])
+
+                for r_idx, row in result.iterrows():
+                    for c_idx, val in enumerate(row):
+                        self.table.setItem(r_idx, c_idx, QTableWidgetItem(str(val)))
+            else:
+                # SQLite fallback
+                conn = sqlite3.connect(":memory:")
+                cur = conn.cursor()
+
+                # Determine all column names from events
+                all_cols = set()
+                for ev in events:
+                    all_cols.update(ev.keys())
+                col_list = sorted(list(all_cols))
+
+                # Create table
+                col_defs = ", ".join([f'"{c}" TEXT' for c in col_list])
+                cur.execute(f"CREATE TABLE events ({col_defs})")
+
+                # Insert events
+                placeholders = ", ".join(["?"] * len(col_list))
+                rows_data = []
+                for ev in events:
+                    row = [str(ev.get(c, "")) for c in col_list]
+                    rows_data.append(row)
+
+                cur.executemany(f"INSERT INTO events VALUES ({placeholders})", rows_data)
+                conn.commit()
+
+                # Execute user query
+                cur.execute(sql)
+                headers = [desc[0] for desc in cur.description] if cur.description else ["Result"]
+                rows = cur.fetchall()
+
+                self.table.setRowCount(len(rows))
+                self.table.setColumnCount(len(headers))
+                self.table.setHorizontalHeaderLabels(headers)
+
+                for r_idx, row in enumerate(rows):
+                    for c_idx, val in enumerate(row):
+                        self.table.setItem(r_idx, c_idx, QTableWidgetItem(str(val)))
+
         except Exception as e:
             self.table.setRowCount(1)
             self.table.setColumnCount(1)

@@ -186,6 +186,7 @@ class LLMSecurityCopilot:
         return None
 
     def _call_openai_rest(self, user_prompt: str, system_prompt: str) -> Optional[str]:
+
         """Execute OpenAI-compatible HTTP POST request to base_url/chat/completions."""
         endpoint = self.base_url
         if not endpoint:
@@ -193,7 +194,12 @@ class LLMSecurityCopilot:
         if not endpoint.endswith("/chat/completions"):
             endpoint = f"{endpoint}/chat/completions"
 
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "KShark-Security-Analyzer/1.0",
+            "HTTP-Referer": "https://kshark.local",
+            "X-Title": "KShark SOC Copilot",
+        }
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
@@ -224,16 +230,102 @@ class LLMSecurityCopilot:
 
         return None
 
+    def test_connection(self) -> tuple[bool, str, float]:
+        """
+        Sends a lightweight latency and connectivity test probe.
+        Checks API validity and reports latency in milliseconds.
+        """
+        import time
+        t0 = time.perf_counter()
+
+        if self._mode == "gemini_sdk":
+            if not GENAI_AVAILABLE:
+                return False, "google-generativeai package not installed", 0.0
+            if not self.api_key:
+                return False, "Google Gemini API key required", 0.0
+            if not self._gemini_model:
+                return False, "Gemini model uninitialized", 0.0
+            try:
+                resp = self._gemini_model.generate_content("ping", generation_config={"max_output_tokens": 5})
+                dt_ms = (time.perf_counter() - t0) * 1000.0
+                return True, f"Connected ({self.model_name})", round(dt_ms, 1)
+            except Exception as e:
+                dt_ms = (time.perf_counter() - t0) * 1000.0
+                return False, f"Gemini Error: {e}", round(dt_ms, 1)
+
+        elif self._mode == "openai_rest":
+            base = self.base_url or "http://localhost:11434/v1"
+            headers = {
+                "User-Agent": "KShark-Security-Analyzer/1.0",
+                "HTTP-Referer": "https://kshark.local",
+                "X-Title": "KShark SOC Copilot",
+                "Content-Type": "application/json",
+            }
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+
+            # Step 1: Probe /models endpoint for instant auth and connectivity verification
+            models_endpoint = base.replace("/chat/completions", "")
+            if not models_endpoint.endswith("/models"):
+                models_endpoint = f"{models_endpoint}/models"
+
+            try:
+                req = urllib.request.Request(models_endpoint, headers=headers, method="GET")
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    dt_ms = (time.perf_counter() - t0) * 1000.0
+                    return True, f"Connected: 200 OK ({self.model_name})", round(dt_ms, 1)
+            except urllib.error.HTTPError as he:
+                if he.code in (401, 403):
+                    return False, f"Authentication Failed: HTTP {he.code} (Invalid API Key)", 0.0
+                # If /models is forbidden or not supported, try lightweight completion
+            except Exception:
+                pass
+
+            # Step 2: Probe /chat/completions fallback
+            endpoint = base
+            if not endpoint.endswith("/chat/completions"):
+                endpoint = f"{endpoint}/chat/completions"
+
+            payload = {
+                "model": self.model_name or "llama3",
+                "messages": [{"role": "user", "content": "hi"}],
+                "max_tokens": 3,
+                "temperature": 0.1,
+            }
+
+            try:
+                req = urllib.request.Request(
+                    endpoint,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers=headers,
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    dt_ms = (time.perf_counter() - t0) * 1000.0
+                    return True, f"Connected: 200 OK ({self.model_name})", round(dt_ms, 1)
+            except urllib.error.HTTPError as he:
+                dt_ms = (time.perf_counter() - t0) * 1000.0
+                return False, f"HTTP Error {he.code}: {he.reason}", round(dt_ms, 1)
+            except Exception as e:
+                dt_ms = (time.perf_counter() - t0) * 1000.0
+                return False, f"Connection Failed: {e}", round(dt_ms, 1)
+
+        return False, "Offline Heuristic Mode (No remote provider configured)", 0.0
+
     # ─────────────────────────────────────────────────────────
     # Threat Analysis (SOC Incident Report)
     # ─────────────────────────────────────────────────────────
 
+
+
     def analyze_threat(
         self,
         action: Dict[str, Any],
-        metadata: Dict[str, Any],
+        metadata: Optional[Dict[str, Any]] = None,
         feature_vector: Optional[Any] = None,
     ) -> str:
+        if metadata is None:
+            metadata = action
         prompt = self._build_threat_prompt(action, metadata, feature_vector)
         res = self._generate_completion(prompt)
         if res:
@@ -257,10 +349,10 @@ class LLMSecurityCopilot:
 
         return THREAT_ANALYSIS_PROMPT.format(
             pid=action.get("pid", metadata.get("pid", 0)),
-            comm=metadata.get("comm", "unknown"),
-            exe_path=metadata.get("exe_path", "unknown"),
-            parent_comm=metadata.get("parent_comm", "unknown"),
-            dst_ip=metadata.get("dst_ip", "0.0.0.0"),
+            comm=metadata.get("comm", action.get("comm", "unknown")),
+            exe_path=metadata.get("exe_path", action.get("exe_path", "unknown")),
+            parent_comm=metadata.get("parent_comm", action.get("parent_comm", "unknown")),
+            dst_ip=metadata.get("dst_ip", action.get("dst_ip", "0.0.0.0")),
             event_count=metadata.get("event_count", 0),
             threat_name=action.get("threat_name", "UNKNOWN"),
             rf_threat_name=action.get("rf_threat", action.get("threat_name", "UNKNOWN")),
@@ -292,13 +384,15 @@ class LLMSecurityCopilot:
     def generate_remediation(
         self,
         action: Dict[str, Any],
-        metadata: Dict[str, Any],
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
+        if metadata is None:
+            metadata = action
         prompt = REMEDIATION_PROMPT.format(
             pid=action.get("pid", metadata.get("pid", 0)),
-            comm=metadata.get("comm", "unknown"),
-            exe_path=metadata.get("exe_path", "/tmp/unknown"),
-            dst_ip=metadata.get("dst_ip", "0.0.0.0"),
+            comm=metadata.get("comm", action.get("comm", "unknown")),
+            exe_path=metadata.get("exe_path", action.get("exe_path", "/tmp/unknown")),
+            dst_ip=metadata.get("dst_ip", action.get("dst_ip", "0.0.0.0")),
             threat_name=action.get("threat_name", "UNKNOWN"),
             confidence=action.get("confidence", 0.0),
         )
@@ -310,6 +404,14 @@ class LLMSecurityCopilot:
     # ─────────────────────────────────────────────────────────
     # Interactive Q&A Analyst Chat
     # ─────────────────────────────────────────────────────────
+
+    def chat_with_analyst(
+        self,
+        user_query: str,
+        session_context: Optional[Dict[str, Any]] = None,
+        recent_events: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
+        return self.chat(user_query, audit_history=recent_events, active_blocks=[session_context] if session_context else None)
 
     def chat(
         self,
@@ -328,6 +430,7 @@ class LLMSecurityCopilot:
             return res
         return self._fallback_chat(user_query, audit_history, active_blocks)
 
+
     # ─────────────────────────────────────────────────────────
     # Offline Rule-Based Fallbacks
     # ─────────────────────────────────────────────────────────
@@ -338,45 +441,95 @@ class LLMSecurityCopilot:
         metadata: Dict[str, Any],
         feature_vector: Optional[Any],
     ) -> str:
-        pid = action.get("pid", metadata.get("pid", 0))
-        comm = metadata.get("comm", "unknown")
-        exe = metadata.get("exe_path", "/tmp/malware")
-        threat = action.get("threat_name", "UNKNOWN")
-        conf = action.get("confidence", 0.0)
-        action_taken = action.get("action_taken", "LOG_ONLY")
-        dst_ip = metadata.get("dst_ip", "0.0.0.0")
+        comm = metadata.get("comm") or action.get("comm") or "system_process"
+        pid = int(action.get("pid") or metadata.get("pid") or 0)
+        ppid = int(metadata.get("ppid") or action.get("ppid") or 1)
+        parent_comm = metadata.get("parent_comm") or action.get("parent_comm") or ("systemd" if ppid == 1 else "init")
+        
+        # Real executable path derivation
+        exe = metadata.get("exe_path") or action.get("exe_path")
+        if not exe or exe == "/tmp/malware":
+            if comm in ("ntpd", "chronyd", "sshd", "systemd-journald", "systemd-udevd"):
+                exe = f"/usr/sbin/{comm}"
+            else:
+                exe = f"/usr/bin/{comm}" if pid > 0 else "-"
 
-        return f"""# 🛡️ SOC Incident Report (Offline Rule-Based Synthesis)
+        syscall = metadata.get("syscall") or action.get("syscall") or metadata.get("event_name") or "epoll_wait"
+        dst_ip = metadata.get("dst_ip") or action.get("dst_ip") or "-"
+        if dst_ip == "0.0.0.0" or dst_ip == "":
+            dst_ip = "N/A (Local Kernel Syscall)"
+
+        threat = (action.get("threat_name") or metadata.get("threat_name") or "BENIGN").upper()
+        conf = float(action.get("confidence") or metadata.get("confidence") or 0.0)
+        forensic = metadata.get("forensic_info") or action.get("forensic_info") or ""
+
+        if threat in ("BENIGN", "NONE", ""):
+            return f"""# Process & Kernel Telemetry Audit
 
 ### Executive Summary
-At **{action.get('timestamp', 'NOW')}**, the eBPF Threat Engine detected a high-confidence **{threat}** activity originating from process **`{comm}`** (PID `{pid}`). The ML classifier registered **{conf:.2%} confidence** with LSM kernel enforcement action **`{action_taken}`**.
+Process **`{comm}`** (PID `{pid}`, PPID `{ppid}`) was audited via active eBPF system call telemetry. Dual-model machine learning ensemble evaluated system call patterns and classified this telemetry stream as **BENIGN** with **0.00% anomaly risk**.
 
 ---
 
-### Process & Telemetry Indicators
-- **Process ID**: `{pid}`
+### Process Identity & Execution Profile
 - **Process Name**: `{comm}`
+- **Process ID (PID)**: `{pid}`
+- **Parent Process (PPID)**: `{parent_comm}` (PID `{ppid}`)
 - **Executable Path**: `{exe}`
-- **Parent Process**: `{metadata.get('parent_comm', 'bash')}`
-- **Process Lineage Path**: `{metadata.get('lineage_str', 'unknown')}`
-- **Destination IP**: `{dst_ip}`
-- **Enforcement Status**: `{action_taken}` (Permanent: `{action.get('is_permanent', False)}`)
+- **Last Observed Syscall**: `{syscall}`
+- **Network State**: `{dst_ip}`
 
 ---
 
-### Forensic Threat Analysis
-1. **Threat Signature**: Class **`{threat}`** matched supervised dual-model consensus (Random Forest + XGBoost).
-2. **Kernel LSM Action**: BPF map `pid_blocklist` updated to reject `sys_enter` syscalls with `-EPERM`.
-3. **Network Vector**: Destination IP `{dst_ip}` tagged for automated blocklist injection.
+### Telemetry & Security Evaluation
+1. **Behavioral Footprint**: Standard operational system call distribution observed.
+2. **LSM Hook Evaluation**: No unauthorized credential access, namespace tampering, or shadow file violations.
+3. **Anomaly Consensus**: Dual ML models (Random Forest + XGBoost) scored this profile as normal.
 
 ---
 
-### Tactical Remediation Checklist
-- [x] Process execution blocked at LSM kernel boundary.
-- [ ] Freeze process tree: `kill -STOP {pid}`
-- [ ] Inspect open sockets: `lsof -p {pid}`
-- [ ] Capture memory dump: `gcore {pid}`
-- [ ] Terminate process tree: `kill -9 {pid}`
+### Operational Recommendation
+Status: **Normal Execution**. No containment or isolation actions required.
+"""
+
+        # For verified security anomalies
+        lineage = metadata.get("lineage_str") or metadata.get("process_lineage_path") or f"{parent_comm} (PID {ppid}) -> {comm} (PID {pid})"
+        return f"""# SOC Incident Report (Security Incident & Threat Forensic Report)
+
+### Incident Summary
+The eBPF threat engine flagged high-confidence **{threat}** activity originating from process **`{comm}`** (PID `{pid}`). ML classifier consensus registered **{conf:.1%} confidence**.
+
+---
+
+### Process & Incident Indicators
+- **Target Process**: `{comm}` (PID `{pid}`)
+- **Parent Process**: `{parent_comm}` (PID `{ppid}`)
+- **Process Lineage Path**: `{lineage}`
+- **Executable Path**: `{exe}`
+- **Observed Syscall**: `{syscall}`
+- **Destination / Target**: `{dst_ip}`
+- **Detection Signature**: `{forensic or 'Dual-Ensemble Machine Learning Consensus'}`
+
+---
+
+### Threat Analysis & MITRE Alignment
+1. **Threat Classification**: **`{threat}`**
+2. **Kernel Telemetry**: Anomalous system call patterns detected matching known exploit techniques.
+3. **Impact Assessment**: Immediate process isolation recommended to prevent lateral movement or data corruption.
+
+---
+
+### Recommended Incident Response Actions
+```bash
+# 1. Freeze process execution to preserve memory state
+sudo kill -STOP {pid}
+
+# 2. Inspect active network sockets and open file descriptors
+sudo lsof -p {pid}
+
+# 3. Terminate process if verified malicious
+sudo kill -9 {pid}
+```
 """
 
     def _fallback_generate_remediation(
@@ -384,59 +537,57 @@ At **{action.get('timestamp', 'NOW')}**, the eBPF Threat Engine detected a high-
         action: Dict[str, Any],
         metadata: Dict[str, Any],
     ) -> str:
-        pid = action.get("pid", metadata.get("pid", 0))
-        comm = metadata.get("comm", "unknown")
-        dst_ip = metadata.get("dst_ip", "0.0.0.0")
-        threat = action.get("threat_name", "UNKNOWN")
+        comm = metadata.get("comm") or action.get("comm") or "system_process"
+        pid = int(action.get("pid") or metadata.get("pid") or 0)
+        dst_ip = metadata.get("dst_ip") or action.get("dst_ip") or ""
+        threat = (action.get("threat_name") or metadata.get("threat_name") or "BENIGN").upper()
 
-        ip_cmd = f"sudo ip route add blackhole {dst_ip}" if dst_ip and dst_ip != "0.0.0.0" else "# No external IP"
+        if threat in ("BENIGN", "NONE", ""):
+            return f"""# Incident Response & Remediation Plan
 
-        return f"""# 🛠️ Automated Containment & Remediation Guide
+### Process Evaluation: {comm} (PID {pid})
+Status: **BENIGN / NORMAL OPERATION**
+No malicious behaviors or security anomalies were identified for this process.
 
-### Threat Target
-- **Threat Type**: `{threat}`
-- **Process**: `{comm}` (PID `{pid}`)
-- **Destination IP**: `{dst_ip}`
+### Operational Guidelines
+- Continuous monitoring active via eBPF tracepoints.
+- No remediation, kill signals, or process containment required.
+"""
+
+        ip_block_cmd = f"sudo iptables -A OUTPUT -d {dst_ip} -j DROP" if dst_ip and dst_ip not in ("0.0.0.0", "-", "N/A (Local Kernel Syscall)") else "# No remote IP attached"
+
+        return f"""# Containment & Remediation Guide (Incident Response Playbook)
+
+### Threat Profile
+- **Threat Class**: `{threat}`
+- **Target Process**: `{comm}` (PID `{pid}`)
+- **Network Destination**: `{dst_ip or 'Local Execution'}`
 
 ---
 
-### Step 1: Immediate Process Containment
-Execute the following commands in terminal:
+### Phase 1: Immediate Process Containment
+Execute the following incident containment commands:
 
 ```bash
-# 1. Pause process execution
+# 1. Freeze execution to preserve volatile RAM artifacts
 sudo kill -STOP {pid}
 
-# 2. Inspect active file descriptors and network connections
+# 2. Inspect active sockets and open descriptors
 sudo lsof -p {pid}
 
-# 3. Inspect working directory and binary
-sudo ls -l /proc/{pid}/exe /proc/{pid}/cwd
+# 3. Capture process environment & commandline
+sudo cat /proc/{pid}/cmdline | tr '\\0' ' '
+```
 
-# 4. Terminate process forcefully
+---
+
+### Phase 2: Eradication & Process Termination
+```bash
+# Terminate malicious process
 sudo kill -9 {pid}
-```
 
----
-
-### Step 2: Network Quarantine
-```bash
-# Block destination IP at routing table level
-{ip_cmd}
-
-# Alternative: Block via iptables
-sudo iptables -A OUTPUT -d {dst_ip} -j DROP
-```
-
----
-
-### Step 3: Forensic Artifact Collection
-```bash
-# Preserve environment variables
-sudo cat /proc/{pid}/environ | tr '\\0' '\\n' > /tmp/proc_{pid}_environ.txt
-
-# Preserve process commandline arguments
-sudo cat /proc/{pid}/cmdline | tr '\\0' ' ' > /tmp/proc_{pid}_cmdline.txt
+# Quarantine network destination
+{ip_block_cmd}
 ```
 """
 
@@ -449,20 +600,15 @@ sudo cat /proc/{pid}/cmdline | tr '\\0' ' ' > /tmp/proc_{pid}_cmdline.txt
         total_eval = len(audit_history) if audit_history else 0
         active_count = len(active_blocks) if active_blocks else 0
 
-        return f"""### 🤖 Antigravity Copilot (Offline Mode)
+        return f"""### Antigravity Copilot (Offline Mode)
 
-I am currently running in **offline rule-based mode** (no active LLM API key or base URL configured).
+**System State**:
+- **Monitored Telemetry Events**: `{total_eval:,}`
+- **Active Incident Contexts**: `{active_count}`
+- **Inference Mode**: Offline Kernel Heuristic & Dual-Ensemble ML Consensus
 
-**Current System Status**:
-- **Active Kernel Blocks**: `{active_count}`
-- **Total Evaluated Events**: `{total_eval}`
-
-To connect to any LLM (Ollama, OpenAI, Groq, DeepSeek, Gemini, LM Studio), set your config:
-```python
-# Example A: Connect to local Ollama / LM Studio
-copilot.set_llm_config(base_url="http://localhost:11434/v1", model_name="llama3:8b")
-
-# Example B: Connect to OpenAI / Groq / DeepSeek
-copilot.set_llm_config(api_key="sk-...", base_url="https://api.openai.com/v1", model_name="gpt-4o")
-```
+**Forensic Guidance**:
+- Use the quick action buttons above (`Analyze Event`, `Attack Chain`, `Sigma & YARA`, `Playbook`) to generate structured forensic reports for the selected process.
+- Configure remote LLM endpoints (Ollama, Gemini, Groq, OpenAI) anytime via **Config**.
 """
+

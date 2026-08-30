@@ -83,10 +83,10 @@ class MainToolBar(QToolBar):
         self.act_find = self.addAction(KSharkIcons.search_find(), "Find an event... (Ctrl+F)")
         self.act_find.triggered.connect(self.findTriggered)
 
-        self.act_prev = self.addAction(KSharkIcons.go_previous(), "Go to the previous event (Ctrl+Down)")
+        self.act_prev = self.addAction(KSharkIcons.go_previous(), "Go to the previous event (Ctrl+Up)")
         self.act_prev.triggered.connect(self.goPrevTriggered)
 
-        self.act_next = self.addAction(KSharkIcons.go_next(), "Go to the next event (Ctrl+Up)")
+        self.act_next = self.addAction(KSharkIcons.go_next(), "Go to the next event (Ctrl+Down)")
         self.act_next.triggered.connect(self.goNextTriggered)
 
         self.act_first = self.addAction(KSharkIcons.go_first(), "Go to the first event (Ctrl+Home)")

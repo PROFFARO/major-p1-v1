@@ -54,12 +54,48 @@ class EventTableModel(QAbstractTableModel):
         self.colorize_enabled = True
 
         self._marked_rows = set()
+        self._comments: Dict[int, str] = {}
         self._time_ref_row: Optional[int] = None
         self._first_timestamp_ns: Optional[int] = None
 
     @property
     def threat_count(self) -> int:
         return self._threat_count
+
+    def set_comment(self, row: int, comment: str):
+        """Attaches or clears a forensic comment for a given row."""
+        if 0 <= row < len(self._events):
+            if comment.strip():
+                self._comments[row] = comment.strip()
+                if row < len(self._row_texts) and len(self._row_texts[row]) > 0:
+                    self._row_texts[row][0] = f"💬 {row + 1}"
+            else:
+                self._comments.pop(row, None)
+                if row < len(self._row_texts) and len(self._row_texts[row]) > 0:
+                    self._row_texts[row][0] = f"★ {row + 1}" if row in self._marked_rows else str(row + 1)
+            self.dataChanged.emit(self.index(row, 0), self.index(row, len(self.COLUMNS) - 1))
+
+    def get_comment(self, row: int) -> str:
+        """Returns the forensic comment for a given row."""
+        return self._comments.get(row, "")
+
+    def toggle_mark(self, row: int) -> bool:
+        """Toggles the visual mark on a given row."""
+        if 0 <= row < len(self._events):
+            if row in self._marked_rows:
+                self._marked_rows.remove(row)
+                res = False
+            else:
+                self._marked_rows.add(row)
+                res = True
+            if row < len(self._row_texts) and len(self._row_texts[row]) > 0:
+                if row in self._comments:
+                    self._row_texts[row][0] = f"💬 {row + 1}"
+                else:
+                    self._row_texts[row][0] = f"★ {row + 1}" if res else str(row + 1)
+            self.dataChanged.emit(self.index(row, 0), self.index(row, len(self.COLUMNS) - 1))
+            return res
+        return False
 
     def rowCount(self, parent=QModelIndex()) -> int:
         return len(self._events)
@@ -91,9 +127,9 @@ class EventTableModel(QAbstractTableModel):
         # 2. Background Color Role (O(1) Instant Cache)
         elif role == Qt.ItemDataRole.BackgroundRole:
             if row in self._marked_rows:
-                return QBrush(QColor("#FFFF99"))
+                return QBrush(QColor("#2C3E50" if ThemeManager.is_dark() else "#FFFF99"))
             if self._time_ref_row == row:
-                return QBrush(QColor("#D0E0FF"))
+                return QBrush(QColor("#1A303A" if ThemeManager.is_dark() else "#D0E0FF"))
             if self.colorize_enabled and row < len(self._row_bg_brushes):
                 return self._row_bg_brushes[row]
             return QVariant()
@@ -101,16 +137,22 @@ class EventTableModel(QAbstractTableModel):
         # 3. Foreground Color Role (O(1) Instant Cache)
         elif role == Qt.ItemDataRole.ForegroundRole:
             if row in self._marked_rows:
-                return QBrush(QColor("#000000"))
+                return QBrush(QColor("#F1C40F" if ThemeManager.is_dark() else "#000000"))
             if self.colorize_enabled and row < len(self._row_fg_brushes):
                 return self._row_fg_brushes[row]
             return QVariant()
 
-        # 4. Font Role
+        # 4. ToolTip Role
+        elif role == Qt.ItemDataRole.ToolTipRole:
+            if row in self._comments:
+                return f"Forensic Note: {self._comments[row]}"
+            return QVariant()
+
+        # 5. Font Role
         elif role == Qt.ItemDataRole.FontRole:
             return self.mono_font
 
-        # 5. Text Alignment Role
+        # 6. Text Alignment Role
         elif role == Qt.ItemDataRole.TextAlignmentRole:
             if col in (0, 4, 5):
                 return Qt.AlignmentFlag.AlignCenter
@@ -301,3 +343,19 @@ class EventTableModel(QAbstractTableModel):
         else:
             self._time_ref_row = row
         self.dataChanged.emit(self.index(0, 1), self.index(len(self._events) - 1, 1))
+
+    def set_time_format(self, fmt: int):
+        """Switches timestamp format (Relative, Time of Day, Date Time, Epoch)."""
+        self.time_format = fmt
+        for idx, ev in enumerate(self._events):
+            ts_ns = int(ev.get("timestamp_ns", 0))
+            if idx < len(self._row_texts) and len(self._row_texts[idx]) > 1:
+                self._row_texts[idx][1] = self._format_timestamp(ts_ns)
+        if self._events:
+            self.dataChanged.emit(self.index(0, 1), self.index(len(self._events) - 1, 1), [Qt.ItemDataRole.DisplayRole])
+
+    def set_font_size(self, size: float):
+        """Updates monospace font size dynamically across the event table."""
+        self.mono_font = get_monospace_font(size=size)
+        self.layoutChanged.emit()
+

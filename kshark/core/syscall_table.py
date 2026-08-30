@@ -168,3 +168,15 @@ def resolve_syscall_name(event: dict) -> str:
         return str(ev_type)
 
     return "sys_unknown"
+
+
+def get_syscall_id(name: str) -> int:
+    """Reverse lookup of syscall name to syscall ID."""
+    if not name:
+        return 0
+    name_l = name.lower().strip()
+    for sc_id, sc_name in LINUX_SYSCALL_NAMES.items():
+        if sc_name == name_l:
+            return sc_id
+    return 0
+

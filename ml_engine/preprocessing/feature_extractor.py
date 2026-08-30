@@ -193,25 +193,20 @@ class PIDWindow:
             return SLIDING_WINDOW_SECONDS
         return delta / 1e9
 
-    def to_feature_vector(self) -> Optional[np.ndarray]:
+    def to_live_vector(self, min_events: int = 1) -> Optional[np.ndarray]:
         """
-        Compute the 12-dimensional feature vector from accumulated statistics.
-        Returns None if the window has insufficient data.
+        Compute the 12-dimensional feature vector for real-time inference without waiting for window close.
         """
-        if self.event_count < MIN_EVENTS_PER_WINDOW:
+        if self.event_count < min_events:
             return None
 
         duration = self.duration_seconds()
         if duration <= 0:
-            duration = SLIDING_WINDOW_SECONDS
+            duration = 1.0
 
-        # Feature 0: syscall_rate (events per second)
         syscall_rate = self.event_count / duration
-
-        # Feature 1: syscall_entropy (Shannon entropy of syscall ID distribution)
         syscall_entropy = _shannon_entropy(self.syscall_ids)
 
-        # Feature 2: file_write_ratio
         total_file_ops = len(self.file_ops)
         if total_file_ops > 0:
             write_ops = sum(
@@ -222,37 +217,23 @@ class PIDWindow:
         else:
             file_write_ratio = 0.0
 
-        # Feature 3: sensitive_file_access (count)
         sensitive_file_access = float(self.sensitive_hits)
-
-        # Feature 4: privilege_events (count)
         privilege_events = float(self.priv_count)
-
-        # Feature 5: memory_rwx_count (count)
         memory_rwx_count = float(self.mem_exec_count)
-
-        # Feature 6: network_outbound_rate (per second)
         network_outbound_rate = self.net_out_count / duration
-
-        # Feature 7: dns_query_rate (per second)
         dns_query_rate = self.dns_count / duration
-
-        # Feature 8: parent_is_suspicious (binary)
         parent_is_suspicious = 1.0 if self.parent_comm.lower() in SUSPICIOUS_PARENTS else 0.0
 
-        # Feature 9: execution_path_depth (directory depth of binary)
         if self.exe_path:
             execution_path_depth = float(self.exe_path.count("/"))
         else:
             execution_path_depth = 0.0
 
-        # Feature 10: failed_syscall_ratio
         if self.event_count > 0:
             failed_syscall_ratio = self.failed_count / self.event_count
         else:
             failed_syscall_ratio = 0.0
 
-        # Feature 11: unique_syscall_count
         unique_syscall_count = float(len(set(self.syscall_ids)))
 
         return np.array([
@@ -269,6 +250,15 @@ class PIDWindow:
             failed_syscall_ratio,
             unique_syscall_count,
         ], dtype=np.float64)
+
+    def to_feature_vector(self) -> Optional[np.ndarray]:
+        """
+        Compute the 12-dimensional feature vector from accumulated statistics.
+        Returns None if the window has insufficient data.
+        """
+        if self.event_count < MIN_EVENTS_PER_WINDOW:
+            return None
+        return self.to_live_vector(min_events=MIN_EVENTS_PER_WINDOW)
 
     def to_metadata(self) -> dict:
         """Return PID metadata (not used as features, but useful for labeling)."""
@@ -301,6 +291,13 @@ class StreamingExtractor:
     def __init__(self, window_seconds: float = SLIDING_WINDOW_SECONDS):
         self.window_ns = int(window_seconds * 1e9)
         self.windows: dict[int, PIDWindow] = {}
+
+    def get_live_vector(self, pid: int) -> Optional[np.ndarray]:
+        """Returns the current real-time feature vector for an active PID."""
+        if pid in self.windows:
+            return self.windows[pid].to_live_vector(min_events=1)
+        return None
+
 
     def ingest(self, ev: dict) -> list[tuple[int, np.ndarray, dict]]:
         """

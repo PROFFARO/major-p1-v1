@@ -84,6 +84,32 @@ FIELD_ALIASES = {
     "threat.confidence": "confidence",
     "confidence": "confidence",
 
+    # Return Code & Errno
+    "evt.res": "retval",
+    "res": "retval",
+    "ret": "retval",
+    "retval": "retval",
+    "errno": "retval",
+
+    # Source Network Endpoints & Protocols
+    "net.src": "src_ip",
+    "ip.src": "src_ip",
+    "src.ip": "src_ip",
+    "src_ip": "src_ip",
+    "net.srcport": "src_port",
+    "src_port": "src_port",
+    "net.proto": "net_proto",
+    "proto": "net_proto",
+    "protocol": "net_proto",
+
+    # Execution & Working Directory
+    "proc.cmdline": "cmdline",
+    "cmdline": "cmdline",
+    "args": "cmdline",
+    "proc.cwd": "cwd",
+    "cwd": "cwd",
+    "proc.exe": "exe_path",
+
     # Container / CGroup
     "container.name": "container_name",
     "container": "container_name",
@@ -96,6 +122,10 @@ FIELD_ALIASES = {
 class ASTNode:
     def evaluate(self, event: Dict[str, Any]) -> bool:
         raise NotImplementedError
+
+    def matches(self, event: Dict[str, Any]) -> bool:
+        return self.evaluate(event)
+
 
 
 class FieldExistenceNode(ASTNode):
@@ -118,8 +148,9 @@ class FieldExistenceNode(ASTNode):
             sc = resolve_syscall_name(event)
             return bool(sc and sc != "sys_unknown")
         elif self.field == "comm":
-            comm = event.get("comm") or event.get("proc_name") or ""
-            return bool(comm)
+            return bool(event.get("comm") or event.get("proc_name"))
+        elif self.field == "retval":
+            return int(event.get("retval", 0)) < 0
 
         val = event.get(self.field)
         return val is not None and str(val).strip() != ""
@@ -145,6 +176,14 @@ class LiteralComparisonNode(ASTNode):
             val = event.get("threat_name") or event.get("threat_type") or event.get("agreed_threat") or event.get("threat_class") or "BENIGN"
         elif self.field == "dst_ip":
             val = event.get("dst_ip") or event.get("net_dst") or ""
+        elif self.field == "src_ip":
+            val = event.get("src_ip") or "127.0.0.1"
+        elif self.field == "retval":
+            val = event.get("retval", 0)
+        elif self.field == "net_proto":
+            val = event.get("net_proto") or ("TCP" if int(event.get("dst_port", 0)) in (80, 443, 22, 4444, 1337) else "UDP")
+        elif self.field == "cmdline":
+            val = event.get("cmdline") or event.get("exe_path") or ""
         elif self.field == "container_name":
             val = str(event.get("container_name") or event.get("cgroup_id") or "host")
 
@@ -279,12 +318,35 @@ def _unwrap_parens(s: str) -> str:
 
 def compile_filter(filter_str: str) -> Optional[ASTNode]:
     """Compiles a KShark / Wireshark filter string into an evaluatable ASTNode."""
-    s = _unwrap_parens(filter_str.strip())
+    raw = filter_str.strip()
+    if not raw:
+        return None
+
+    # Syntax Validation: Unbalanced parentheses
+    if raw.count("(") != raw.count(")"):
+        raise ValueError("Unbalanced parentheses in filter expression")
+
+    # Syntax Validation: Unclosed quotes
+    quote_double = len(re.findall(r'(?<!\\)"', raw))
+    quote_single = len(re.findall(r"(?<!\\)'", raw))
+    if quote_double % 2 != 0 or quote_single % 2 != 0:
+        raise ValueError("Unclosed quote string in filter expression")
+
+    # Syntax Validation: Invalid operator sequences (e.g. ==== or !==)
+    if re.search(r'={3,}|!={2,}|>{3,}|<{3,}', raw):
+        raise ValueError("Invalid comparison operator sequence")
+
+    # Syntax Validation: Dangling trailing operators
+    if re.search(r'(\b(and|or|not|in)\b|==|!=|>=|<=|>|<|&&|\|\||!)\s*$', raw, re.IGNORECASE):
+        raise ValueError("Incomplete filter expression (trailing operator)")
+
+    s = _unwrap_parens(raw)
     if not s:
         return None
 
     # Handle 'or' / '||' splits outside parentheses
     or_parts = _split_top_level(s, [r"\bor\b", r"\|\|"])
+
     if len(or_parts) > 1:
         nodes = [compile_filter(p) for p in or_parts]
         nodes = [n for n in nodes if n is not None]

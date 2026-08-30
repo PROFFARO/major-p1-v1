@@ -61,9 +61,11 @@ def run_app(argv=None):
     if args.light:
         tm.set_theme(ThemeManager.THEME_KSHARK_LIGHT)
     elif args.dark:
-        tm.set_theme(ThemeManager.THEME_KSHARK_DARK)
+        tm.set_theme(ThemeManager.THEME_WIRESHARK_DARK)
     else:
-        tm.set_theme(ThemeManager.THEME_KSHARK_DARK)
+        from kshark.core.settings import KSharkSettings
+        saved_theme = KSharkSettings().get_theme()
+        tm.set_theme(saved_theme or ThemeManager.THEME_WIRESHARK_DARK)
 
     window = KSharkMainWindow()
     window.show()

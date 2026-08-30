@@ -138,7 +138,8 @@ class ByteHasherDialog(QDialog):
 
         # IPv4
         ip_le = ".".join(str(b) for b in buf[:4])
-        rows.append(("IPv4 Address", ip_le, ip_le))
+        ip_be = ".".join(str(b) for b in reversed(buf[:4]))
+        rows.append(("IPv4 Address", ip_le, ip_be))
 
         table.setRowCount(len(rows))
         for r_idx, (t_name, le_val, be_val) in enumerate(rows):

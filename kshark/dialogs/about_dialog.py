@@ -9,6 +9,7 @@ from PyQt6.QtCore import Qt
 
 from kshark.resources.icons import KSharkIcons
 from kshark.core.theme import ThemeManager, get_ui_font
+from kshark import __version__
 
 
 class AboutDialog(QDialog):
@@ -36,7 +37,7 @@ class AboutDialog(QDialog):
         title_layout = QVBoxLayout()
         title_lbl = QLabel("KShark", self)
         title_lbl.setFont(get_ui_font(size=14, bold=True))
-        ver_lbl = QLabel("Version 4.7.3 (eBPF Kernel & Cloud Observability Edition)", self)
+        ver_lbl = QLabel(f"Version {__version__} (eBPF Kernel & Cloud Observability Edition)", self)
         ver_lbl.setStyleSheet("color: #0E9AA7; font-weight: 500;")
         title_layout.addWidget(title_lbl)
         title_layout.addWidget(ver_lbl)

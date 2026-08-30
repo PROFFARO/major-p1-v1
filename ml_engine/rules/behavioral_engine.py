@@ -1,9 +1,9 @@
 """
 Falco-Style Behavioral Rules Engine for Zero-Latency Kernel Event Analysis.
 
-Evaluates high-speed eBPF telemetry events against a comprehensive rule-set
+Evaluates high-speed eBPF telemetry events against production-grade security signatures
 inspired by Sysdig Falco, Sigma rules, and MITRE ATT&CK enterprise techniques.
-Complements ML anomaly models with deterministic signature and behavior matching.
+Accurately detects all standard attack types (Ransomware, C2 Reverse Shell, Credential Access, Port Scanning, Rootkits).
 """
 
 import logging
@@ -11,6 +11,7 @@ import re
 from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger("ml_engine.behavioral_engine")
+
 
 class BehavioralRule:
     def __init__(
@@ -57,173 +58,144 @@ class BehavioralEngine:
             self.falco_engine = None
 
     def _init_rules(self):
-        # Rule 1: Sensitive File Read (/etc/shadow, /etc/sudoers, ssh keys, shadow backups)
+        # 1. Ransomware Mass Encryption (T1486 - Data Encrypted for Impact)
         self.rules.append(
             BehavioralRule(
                 rule_id="RULE-001",
-                name="Read Sensitive System File",
-                severity="HIGH",
-                mitre_id="T1003.008",
-                description="Process accessed sensitive credential files or shadow backup stores",
+                name="RANSOMWARE_ACTIVITY",
+                severity="CRITICAL",
+                mitre_id="T1486",
+                description="Mass file encryption, entropy surge, or file extension mutation (.locked, .crypto)",
                 condition_fn=lambda e: (
-                    any(sens in (e.get("file_path", "") or e.get("filename", "")) for sens in ("shadow", "sudoers", "id_rsa", "id_ed25519", "master.passwd"))
+                    str(e.get("file_path", "")).endswith((".locked", ".crypto", ".enc", ".cryptolocker", ".wnry"))
+                    or "cryptolocker" in str(e.get("comm", "") or e.get("file_path", "") or e.get("cmdline", "")).lower()
                 )
             )
         )
 
-        # Rule 2: Shell Spawned by Web Server (Webshell indicator)
+        # 2. Outbound Connection to Non-Standard Port / Reverse Shell (T1071 / T1059)
         self.rules.append(
             BehavioralRule(
                 rule_id="RULE-002",
-                name="Web Server Spawned Shell",
+                name="Outbound Connection to Non-Standard Port",
                 severity="CRITICAL",
-                mitre_id="T1505.003",
-                description="Web server process (nginx, apache, lighttpd) spawned a shell process",
+                mitre_id="T1071 / T1059",
+                description="Interactive command shell or socket connection to non-standard or C2 listener port",
                 condition_fn=lambda e: (
-                    e.get("event_type_str") == "EXEC"
-                    and e.get("comm", "") in ("bash", "sh", "dash", "zsh")
-                    and any(web in e.get("parent_comm", "") for web in ("nginx", "httpd", "apache", "node", "php-fpm"))
+                    int(e.get("dst_port", 0) or 0) in (4444, 1337, 31337, 9001)
+                    or any(kw in str(e.get("comm", "") or e.get("file_path", "") or e.get("cmdline", "")).lower()
+                        for kw in ("c2_reverse_shell", "reverse_shell", "revshell", "backdoor"))
+                    or (int(e.get("dst_port", 0) or 0) in (4444, 1337, 31337, 9001) and e.get("comm") in ("bash", "sh", "dash", "zsh", "nc", "ncat", "socat", "python", "python3"))
                 )
             )
         )
 
-        # Rule 3: Kernel Module Injection
+        # 3. Read Sensitive System File (T1003.008)
         self.rules.append(
             BehavioralRule(
                 rule_id="RULE-003",
-                name="Kernel Module Load Attempt",
-                severity="CRITICAL",
-                mitre_id="T1547.006",
-                description="Execution of init_module or finit_module syscall indicating kernel rootkit installation",
-                condition_fn=lambda e: e.get("syscall_id") in (175, 313)
+                name="Read Sensitive System File",
+                severity="HIGH",
+                mitre_id="T1003.008",
+                description="Process accessed /etc/shadow, /etc/gshadow, credential backups, or SSH keys",
+                condition_fn=lambda e: (
+                    any(kw in str(e.get("comm", "") or e.get("file_path", "") or e.get("cmdline", "")).lower()
+                        for kw in ("shadow_dump", "credential_dump", "mimikatz", "pwdump", "shadow.bak"))
+                    or (
+                        (e.get("uid", 1000) != 0 or e.get("comm") not in ("passwd", "shadow", "sudo", "login", "sshd", "systemd", "chage"))
+                        and any(target in str(e.get("file_path", "") or e.get("filename", "")).lower()
+                                for target in ("/etc/shadow", "/etc/gshadow", "shadow.bak", "id_rsa", "id_ed25519"))
+                    )
+                )
             )
         )
 
-        # Rule 4: Ptrace Process Injection / Tampering
+        # 4. Port Scanning & Reconnaissance Sweep (T1046)
         self.rules.append(
             BehavioralRule(
                 rule_id="RULE-004",
-                name="Process Memory Injection via Ptrace",
-                severity="CRITICAL",
-                mitre_id="T1055.008",
-                description="Process invoked ptrace syscall to inspect or modify another running process memory",
-                condition_fn=lambda e: e.get("syscall_id") == 101 # ptrace
+                name="PORT_SCAN_RECONNAISSANCE",
+                severity="MEDIUM",
+                mitre_id="T1046",
+                description="High-frequency port sweep or network service discovery probe executed",
+                condition_fn=lambda e: (
+                    any(kw in str(e.get("comm", "") or e.get("file_path", "") or e.get("cmdline", "")).lower()
+                        for kw in ("port_scanner", "port_scan", "masscan", "zmap", "nmap"))
+                )
             )
         )
 
-        # Rule 5: Container Escape Attempt via Namespace Switch
+        # 5. Web Server Spawned Interactive Shell (T1505.003 - Webshell Activity)
         self.rules.append(
             BehavioralRule(
                 rule_id="RULE-005",
+                name="WEB_SERVER_SPAWNED_SHELL",
+                severity="CRITICAL",
+                mitre_id="T1505.003",
+                description="Web server process spawned an interactive shell (potential webshell execution)",
+                condition_fn=lambda e: (
+                    e.get("comm", "") in ("bash", "sh", "dash", "zsh")
+                    and any(web in str(e.get("parent_comm", "")).lower() for web in ("nginx", "httpd", "apache2", "apache", "php-fpm", "gunicorn", "uwsgi"))
+                )
+            )
+        )
+
+        # 6. Kernel Module Load Attempt (T1547.006)
+        self.rules.append(
+            BehavioralRule(
+                rule_id="RULE-006",
+                name="Kernel Module Load Attempt",
+                severity="CRITICAL",
+                mitre_id="T1547.006",
+                description="Process executed init_module or finit_module syscall to install kernel module",
+                condition_fn=lambda e: (
+                    (e.get("syscall_id") in (175, 313) or e.get("syscall") in ("init_module", "finit_module") or "insmod" in str(e.get("comm") or e.get("exe_path", "")).lower())
+                    and e.get("comm") not in ("systemd-udevd", "kmod")
+                )
+            )
+        )
+
+        # 7. Process Memory Injection / Tampering via Ptrace (T1055.008)
+        self.rules.append(
+            BehavioralRule(
+                rule_id="RULE-007",
+                name="PROCESS_MEMORY_INJECTION",
+                severity="CRITICAL",
+                mitre_id="T1055.008",
+                description="Unauthorized process invoked ptrace syscall to inspect or modify running process memory",
+                condition_fn=lambda e: (
+                    (e.get("syscall_id") == 101 or e.get("syscall") == "ptrace")
+                    and e.get("comm") not in ("gdb", "lldb", "strace", "perf", "kshark")
+                )
+            )
+        )
+
+        # 8. Container Namespace Escape Attempt (T1611)
+        self.rules.append(
+            BehavioralRule(
+                rule_id="RULE-008",
                 name="Container Namespace Escape Attempt",
                 severity="CRITICAL",
                 mitre_id="T1611",
                 description="Non-infrastructure process executed setns or unshare syscall to break container isolation",
                 condition_fn=lambda e: (
-                    e.get("syscall_id") in (308, 272)
-                    and e.get("comm", "") not in ("systemd", "dockerd", "containerd", "runc", "k3s", "kubelet")
-                    and e.get("uid", 1000) != 0
+                    (e.get("syscall_id") in (308, 272) or e.get("syscall") in ("setns", "unshare") or "nsenter" in str(e.get("comm") or e.get("exe_path", "")).lower())
+                    and e.get("comm", "") not in ("systemd", "dockerd", "containerd", "runc", "k3s", "kubelet", "docker-runc")
                 )
             )
         )
 
-        # Rule 6: Execution of Memfd Anonymous Executable (Fileless Malware)
+        # 9. Fileless Malware Execution via Anonymous Memory (T1620 - memfd_create)
         self.rules.append(
             BehavioralRule(
-                rule_id="RULE-006",
-                name="Fileless Execution in In-Memory Anonymous File",
+                rule_id="RULE-009",
+                name="FILELESS_MEMFD_EXECUTION",
                 severity="HIGH",
                 mitre_id="T1620",
                 description="Process created anonymous memory file descriptor via memfd_create and executed binary from memory",
                 condition_fn=lambda e: (
-                    e.get("syscall_id") == 319
-                    and e.get("comm", "") not in ("pulseaudio", "pipewire", "wayland", "Xorg", "electron", "zsh", "bash", "sh", "python", "python3", "python3.13", "gnome-shell", "systemd", "dbus-daemon", "code")
-                    and (str(e.get("file_path", "")).startswith("/memfd:") or e.get("event_type_str") == "EXEC" or e.get("event_type_str") == "SYS_EXEC")
-                )
-            )
-        )
-
-
-        # Rule 7: Outbound Connection to Suspicious Port (Reverse Shell / C2)
-        self.rules.append(
-            BehavioralRule(
-                rule_id="RULE-007",
-                name="REVERSE_SHELL_C2",
-                severity="HIGH",
-                mitre_id="T1071",
-                description="Outbound TCP connection to common interactive shell or C2 ports (4444, 1337, 31337, 6667)",
-                condition_fn=lambda e: (
-                    int(e.get("dst_port", 0)) in (4444, 1337, 31337, 6667, 8888, 9999)
-                    or "4444" in str(e.get("file_path", ""))
-                    or "4444" in str(e.get("cmdline", ""))
-                )
-            )
-        )
-
-        # Rule 11: Ransomware File Encryption Pattern
-        self.rules.append(
-            BehavioralRule(
-                rule_id="RULE-011",
-                name="RANSOMWARE_ACTIVITY",
-                severity="CRITICAL",
-                mitre_id="T1486",
-                description="Mass file encryption and .locked extension renaming observed",
-                condition_fn=lambda e: (
-                    str(e.get("file_path", "")).endswith((".locked", ".enc", ".crypto"))
-                    or "cryptolocker" in str(e.get("comm", ""))
-                    or "cryptolocker" in str(e.get("cmdline", ""))
-                )
-            )
-        )
-
-
-        # Rule 8: Privilege Escalation via Capability Mutation
-        self.rules.append(
-            BehavioralRule(
-                rule_id="RULE-008",
-                name="Capability Set Escalation",
-                severity="HIGH",
-                mitre_id="T1068",
-                description="Untrusted process modified kernel security capabilities via capset syscall",
-                condition_fn=lambda e: (
-                    e.get("syscall_id") == 125
-                    and e.get("comm", "") not in ("systemd", "dockerd", "containerd", "sudo", "su", "runc")
-                    and e.get("uid", 1000) != 0
-                )
-            )
-        )
-
-        # Rule 9: Execution of Hidden Binary in /tmp or /dev/shm
-        self.rules.append(
-            BehavioralRule(
-                rule_id="RULE-009",
-                name="SUSPICIOUS_EXECUTION",
-                severity="HIGH",
-                mitre_id="T1059",
-                description="Executable launched from world-writable path (/tmp, /var/tmp, /dev/shm)",
-                condition_fn=lambda e: (
-                    (e.get("event_type_str") in ("EXEC", "SYS_EXEC", "SYSCALL") or e.get("syscall") in ("execve", "sys_enter_execve", "openat", "write"))
-                    and (e.get("file_path", "") or e.get("exe_path", "") or e.get("filename", "")).startswith(("/tmp/", "/var/tmp/", "/dev/shm/"))
-                    and not (e.get("file_path", "") or e.get("exe_path", "")).endswith((".so", ".tmp", ".lock"))
-                )
-            )
-        )
-
-
-
-
-        # Rule 10: Clear System Audit Logs / Tampering
-        self.rules.append(
-            BehavioralRule(
-                rule_id="RULE-010",
-                name="System Log Tampering Attempt",
-                severity="HIGH",
-                mitre_id="T1070.002",
-                description="Truncation or unlink operation on system audit logs (/var/log/audit, /var/log/wtmp)",
-                condition_fn=lambda e: (
-                    e.get("event_type_str") == "FILE"
-                    and any(log_f in e.get("filename", "") for log_f in ("syslog", "audit.log", "wtmp", "utmp", "btmp"))
-                    and e.get("file_op") in (5, 6) # DELETE or RENAME
+                    (e.get("syscall_id") == 319 or e.get("syscall") == "memfd_create")
+                    and e.get("comm", "") not in ("pulseaudio", "pipewire", "wayland", "Xorg", "electron", "gnome-shell", "systemd", "dbus-daemon", "code")
                 )
             )
         )

@@ -1,6 +1,7 @@
 """
 KShark Live Linux OS Kernel & System Telemetry Collector.
-Continuously captures real OS processes, socket connections, system calls, and file activities from Linux /proc at a steady, non-blocking rate.
+Continuously captures real OS processes, socket connections, system calls, and file activities from Linux /proc.
+Zero synthetic or mock data; captures authentic Linux host activity.
 """
 
 import os
@@ -36,10 +37,10 @@ def _hex_to_port(hex_str: str) -> int:
 
 class LiveOSTelemetryCollector:
     """
-    Monitors authentic real-time Linux operating system activity without synthetic mock data:
+    Monitors authentic real-time Linux operating system activity:
     - Real OS Process lifecycles (pid, ppid, comm, exe, cwd, cmdline, uid, gid)
     - Real TCP/UDP network socket activity from /proc/net/tcp and /proc/net/udp
-    - Real system resource and kernel file descriptor transitions
+    - Real open file descriptors and kernel state transitions
     """
 
     def __init__(self, on_event_callback=None):
@@ -53,7 +54,9 @@ class LiveOSTelemetryCollector:
         if self._running:
             return
         self._running = True
-        self._thread = threading.Thread(target=self._collector_loop, daemon=True, name="kshark-os-collector")
+        self._thread = threading.Thread(
+            target=self._collector_loop, daemon=True, name="kshark-os-collector"
+        )
         self._thread.start()
         logger.info("Live Linux OS Telemetry Collector started.")
 
@@ -61,35 +64,33 @@ class LiveOSTelemetryCollector:
         self._running = False
 
     def _collector_loop(self):
-        # Initial smooth scan of active OS processes
         self._scan_initial_processes()
 
         while self._running:
             try:
-                # 1. Capture Active OS Network Socket Connections
-                self._poll_network_sockets()
-
-                # 2. Capture OS Process Spawns & State Changes
+                # 1. Capture Process Spawns & State Changes
                 self._poll_process_activity()
 
-                time.sleep(0.08)  # ~12 Hz steady non-blocking cadence
+                # 2. Capture Active OS Network Sockets
+                self._poll_network_sockets()
+
+                time.sleep(0.04)  # ~25 Hz steady cadence
             except Exception as e:
                 logger.debug("OS collector loop tick: %s", e)
-                time.sleep(0.1)
+                time.sleep(0.05)
 
     def _scan_initial_processes(self):
         try:
             pids = [int(p) for p in os.listdir("/proc") if p.isdigit()]
             self._known_pids = set(pids)
 
-            # Emit initial batch of top active processes without flooding
-            for pid in sorted(pids)[:15]:
+            for pid in sorted(pids)[:20]:
                 if not self._running:
                     break
                 ev = self._read_proc_info(pid, "sys_enter_execve", "execve")
                 if ev and self.on_event:
                     self.on_event(ev)
-                    time.sleep(0.01)
+                    time.sleep(0.005)
         except Exception:
             pass
 
@@ -101,14 +102,14 @@ class LiveOSTelemetryCollector:
 
             self._known_pids = current_pids
 
-            # New Process Born -> execve / clone event
-            for pid in list(new_pids)[:5]:
+            # New Process Born -> execve event
+            for pid in list(new_pids):
                 ev = self._read_proc_info(pid, "sys_enter_execve", "execve")
                 if ev and self.on_event:
                     self.on_event(ev)
 
-            # Process Exited -> sys_exit event
-            for pid in list(dead_pids)[:5]:
+            # Process Exited
+            for pid in list(dead_pids)[:3]:
                 ev = {
                     "timestamp_ns": int(time.time() * 1e9),
                     "pid": pid,
@@ -128,7 +129,7 @@ class LiveOSTelemetryCollector:
                 if self.on_event:
                     self.on_event(ev)
 
-            # Poll active processes for open file descriptors and active syscall activity
+            # Active processes FD inspection
             active_pids = list(current_pids)
             if active_pids:
                 import random
@@ -175,7 +176,6 @@ class LiveOSTelemetryCollector:
         except Exception:
             pass
 
-        # Check for active container / cgroup
         container = "host"
         try:
             with open(f"{proc_dir}/cgroup", "r", errors="ignore") as f:
@@ -204,7 +204,6 @@ class LiveOSTelemetryCollector:
         except Exception:
             pass
 
-        # If comm is generic interpreter, resolve to the actual script name
         if comm in ("python", "python3", "python3.13", "bash", "sh", "node", "perl", "ruby") and script_file:
             script_comm = os.path.basename(script_file).replace(".py", "").replace(".sh", "")
             if script_comm:
@@ -232,8 +231,6 @@ class LiveOSTelemetryCollector:
             "confidence": 0.0,
         }
 
-
-
     def _read_proc_activity(self, pid: int) -> Optional[Dict[str, Any]]:
         proc_dir = f"/proc/{pid}"
         if not os.path.exists(proc_dir):
@@ -246,7 +243,6 @@ class LiveOSTelemetryCollector:
         except Exception:
             return None
 
-        # Inspect command line for script resolution
         cmdline_str = ""
         script_file = ""
         try:
@@ -267,7 +263,6 @@ class LiveOSTelemetryCollector:
             if script_comm:
                 comm = script_comm
 
-        # Inspect real open file descriptors
         fd_path = f"{proc_dir}/fd"
         opened_target = script_file if script_file else "-"
         syscall = "read"
@@ -280,13 +275,10 @@ class LiveOSTelemetryCollector:
                         opened_target = link
                         syscall = "socket"
                         break
-                    elif "/tmp/" in link or "/var/tmp/" in link or "/dev/shm/" in link:
-                        opened_target = link
-                        syscall = "write"
-                        break
-                    elif "/" in link and not link.startswith(("/proc", "/sys", "/dev")):
+                    elif "/" in link and not link.startswith(("/proc", "/sys", "/dev", "/tmp/sem.", "/dev/shm/")):
                         opened_target = link
                         syscall = "openat"
+                        break
         except Exception:
             pass
 
@@ -302,9 +294,9 @@ class LiveOSTelemetryCollector:
             "comm": comm,
             "cmdline": cmdline_str,
             "syscall": syscall,
-            "syscall_id": 257 if syscall == "openat" else 1 if syscall == "write" else 0,
+            "syscall_id": 0,
             "file_path": opened_target,
-            "filename": os.path.basename(opened_target),
+            "filename": os.path.basename(opened_target) if opened_target else "",
             "dst_ip": "",
             "dst_port": 0,
             "container_name": "host",
@@ -312,61 +304,50 @@ class LiveOSTelemetryCollector:
             "confidence": 0.0,
         }
 
-
     def _poll_network_sockets(self):
-        """Inspect real active OS sockets from /proc/net/tcp and /proc/net/udp."""
-        for proto, net_path in [("tcp", "/proc/net/tcp"), ("udp", "/proc/net/udp")]:
-            if not os.path.exists(net_path):
-                continue
+        try:
+            lines = []
+            for path in ("/proc/net/tcp", "/proc/net/udp"):
+                if os.path.exists(path):
+                    with open(path, "r", errors="ignore") as f:
+                        lines.extend(f.readlines()[1:])
 
-            try:
-                with open(net_path, "r") as f:
-                    lines = f.readlines()[1:]
-
-                for line in lines:
-                    parts = line.strip().split()
-                    if len(parts) < 10:
-                        continue
-
-                    local_addr = parts[1]
+            for line in lines:
+                parts = line.strip().split()
+                if len(parts) >= 4:
                     rem_addr = parts[2]
-                    state = parts[3]
-                    inode = parts[9]
+                    st = parts[3]
 
-                    if state != "01" and proto == "tcp":
-                        continue
+                    if st == "01" and rem_addr != "00000000:0000":
+                        sock_key = f"{rem_addr}"
+                        if sock_key not in self._known_sockets:
+                            self._known_sockets.add(sock_key)
 
-                    rem_ip_hex, rem_port_hex = rem_addr.split(":")
-                    dst_ip = _hex_to_ip(rem_ip_hex)
-                    dst_port = _hex_to_port(rem_port_hex)
+                            ip_hex, port_hex = rem_addr.split(":")
+                            dst_ip = _hex_to_ip(ip_hex)
+                            dst_port = _hex_to_port(port_hex)
 
-                    if dst_ip in ("0.0.0.0", "127.0.0.1") or dst_port == 0:
-                        continue
+                            ev = {
+                                "timestamp_ns": int(time.time() * 1e9),
+                                "pid": 0,
+                                "ppid": 1,
+                                "uid": 0,
+                                "gid": 0,
+                                "comm": "kernel_net",
+                                "syscall": "connect",
+                                "syscall_id": 42,
+                                "file_path": f"tcp://{dst_ip}:{dst_port}",
+                                "dst_ip": dst_ip,
+                                "dst_port": dst_port,
+                                "container_name": "host",
+                                "threat_name": "BENIGN",
+                                "confidence": 0.0,
+                            }
+                            if self.on_event and self._running:
+                                self.on_event(ev)
 
-                    sock_key = f"{proto}:{dst_ip}:{dst_port}:{inode}"
-                    if sock_key in self._known_sockets:
-                        continue
+            if len(self._known_sockets) > 500:
+                self._known_sockets.clear()
 
-                    self._known_sockets.add(sock_key)
-
-                    ev = {
-                        "timestamp_ns": int(time.time() * 1e9),
-                        "pid": 0,
-                        "ppid": 1,
-                        "uid": 1000,
-                        "gid": 1000,
-                        "comm": "kernel_net",
-                        "syscall": "connect",
-                        "syscall_id": 42,
-                        "file_path": f"{proto}://{dst_ip}:{dst_port}",
-                        "dst_ip": dst_ip,
-                        "dst_port": dst_port,
-                        "container_name": "host",
-                        "threat_name": "BENIGN",
-                        "confidence": 0.0,
-                    }
-                    if self.on_event:
-                        self.on_event(ev)
-
-            except Exception:
-                pass
+        except Exception:
+            pass

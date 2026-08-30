@@ -1,12 +1,8 @@
-"""
-KShark & Wireshark Coloring Rules Engine.
-Evaluates event attributes against prioritized rules to assign background/foreground colors.
-"""
-
 from PyQt6.QtGui import QColor
-from typing import List, Tuple, Dict, Any
+from typing import List, Tuple, Dict, Any, Optional
 
 from kshark.core.theme import ThemeManager
+from kshark.core.filter_engine import compile_filter
 
 
 class ColoringRule:
@@ -25,37 +21,34 @@ class ColoringEngine:
 
     def __init__(self):
         self.rules: List[ColoringRule] = self._get_default_rules()
+        self._compiled_cache = {}
 
     def _get_default_rules(self) -> List[ColoringRule]:
         return [
-            ColoringRule("High Severity Threat", "threat_name != 'BENIGN'", "#FFD6D6", "#990000", "#5C1D1D", "#FF9999"),
-            ColoringRule("Process Execve", "syscall == 'execve'", "#F5E6FF", "#4A1A70", "#361D48", "#E6C6FF"),
-            ColoringRule("Network Connect", "syscall == 'connect'", "#E4F0FF", "#10356E", "#1A2F4D", "#B3D4FF"),
-            ColoringRule("File Open / Modify", "syscall == 'openat' or syscall == 'write'", "#E6F9E6", "#145214", "#1E3D1E", "#B8F0B8"),
-            ColoringRule("LSM Security Hook", "syscall contains 'security'", "#FFFDE6", "#61570A", "#474218", "#FFF7A3"),
+            ColoringRule("High Severity Threat", "threat.name != 'BENIGN'", "#FEE2E2", "#991B1B", "#5C1D1D", "#FF9999", True),
+            ColoringRule("Process Execve", "evt.type == 'execve'", "#F3E8FF", "#581C87", "#361D48", "#E6C6FF", True),
+            ColoringRule("Network Connect", "evt.type in ('connect', 'socket', 'bind', 'listen', 'sendto', 'recvfrom') or dst_ip != ''", "#E0F2FE", "#075985", "#1A2F4D", "#B3D4FF", True),
+            ColoringRule("File Open / Modify", "evt.type in ('openat', 'write', 'read', 'unlink', 'rename')", "#DCFCE7", "#166534", "#1E3D1E", "#B8F0B8", True),
+            ColoringRule("LSM Security Hook", "evt.type contains 'security' or evt.type in ('setuid', 'capset')", "#FEF3C7", "#854D0E", "#474218", "#FFF7A3", True),
         ]
+
+    def clear_cache(self):
+        self._compiled_cache.clear()
 
     def get_colors_for_event(self, event: Dict[str, Any]) -> Tuple[QColor, QColor]:
         """Returns (bg_color, fg_color) for an event based on active rules and theme."""
         is_dark = ThemeManager.is_dark()
-        threat = str(event.get("threat_name") or event.get("threat_type") or "BENIGN")
-        sc = str(event.get("syscall") or event.get("syscall_name") or "")
 
-        # Fast direct evaluation for highest throughput
-        if threat != "BENIGN":
-            return (QColor("#5C1D1D"), QColor("#FF9999")) if is_dark else (QColor("#FFD6D6"), QColor("#990000"))
-
-        if sc == "execve":
-            return (QColor("#361D48"), QColor("#E6C6FF")) if is_dark else (QColor("#F5E6FF"), QColor("#4A1A70"))
-
-        if sc == "connect" or event.get("dst_ip"):
-            return (QColor("#1A2F4D"), QColor("#B3D4FF")) if is_dark else (QColor("#E4F0FF"), QColor("#10356E"))
-
-        if sc in ("openat", "write", "read"):
-            return (QColor("#1E3D1E"), QColor("#B8F0B8")) if is_dark else (QColor("#E6F9E6"), QColor("#145214"))
-
-        if "security" in sc:
-            return (QColor("#474218"), QColor("#FFF7A3")) if is_dark else (QColor("#FFFDE6"), QColor("#61570A"))
+        for rule in self.rules:
+            if not rule.enabled or not rule.filter_expr.strip():
+                continue
+            if rule.filter_expr not in self._compiled_cache:
+                self._compiled_cache[rule.filter_expr] = compile_filter(rule.filter_expr)
+            ast = self._compiled_cache.get(rule.filter_expr)
+            if ast and ast.matches(event):
+                bg = rule.bg_dark if is_dark else rule.bg_light
+                fg = rule.fg_dark if is_dark else rule.fg_light
+                return (QColor(bg), QColor(fg))
 
         # Default fallback zebra colors
         if is_dark:
@@ -64,4 +57,5 @@ class ColoringEngine:
 
     def get_row_colors(self, event: Dict[str, Any]) -> Tuple[QColor, QColor]:
         return self.get_colors_for_event(event)
+
 
