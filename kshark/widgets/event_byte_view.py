@@ -157,9 +157,10 @@ class EventByteView(QWidget):
 
         layout.addWidget(self.inspector_frame)
 
-    def setFont(self, font: QFont):
-        super().setFont(font)
-        if hasattr(self, "editor"):
+    def set_font_size(self, size: float):
+        """Updates monospace font size dynamically."""
+        font = get_monospace_font(size=size)
+        if hasattr(self, "editor") and self.editor is not None:
             self.editor.setFont(font)
 
     def set_event_data(self, event: Optional[Dict[str, Any]]):

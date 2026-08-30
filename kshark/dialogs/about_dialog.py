@@ -71,8 +71,9 @@ class AboutDialog(QDialog):
         l2 = QVBoxLayout(t2)
         browser2 = QTextBrowser(t2)
         browser2.setHtml("""
-            <p><b>Wireshark & KShark Creator:</b> Gerald Combs &lt;gerald@wireshark.org&gt;</p>
-            <p><b>eBPF Observability & ML Integration:</b> KShark / KShark Platform Team</p>
+            <p><b>Lead Author & Architect:</b> Dayananda Bindhani</p>
+            <p><b>Platform:</b> KShark Linux Kernel eBPF Observability & Threat Detection System</p>
+            <p><b>Wireshark Original Core:</b> Gerald Combs &lt;gerald@wireshark.org&gt; and the Wireshark Community</p>
             <p><b>License:</b> GNU General Public License v2 or later (GPL-2.0-or-later)</p>
         """)
         l2.addWidget(browser2)

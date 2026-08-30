@@ -24,6 +24,7 @@ import math
 from kshark.core.theme import ThemeManager, get_ui_font, get_monospace_font
 from kshark.dialogs.byte_hasher_dialog import ByteHasherDialog
 from kshark.resources.icons import KSharkIcons
+from kshark.widgets.scroll_views import KSharkTableWidget
 
 
 class BytePayloadInspectorPane(QWidget):
@@ -132,7 +133,7 @@ class BytePayloadInspectorPane(QWidget):
         l_decode.setContentsMargins(6, 6, 6, 6)
         l_decode.setSpacing(6)
 
-        self.decode_table = QTableWidget()
+        self.decode_table = KSharkTableWidget()
         self.decode_table.setColumnCount(3)
         self.decode_table.setHorizontalHeaderLabels(["Data Type", "Little-Endian (x86)", "Big-Endian (Network)"])
         self.decode_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -149,7 +150,7 @@ class BytePayloadInspectorPane(QWidget):
         l_strings.setContentsMargins(6, 6, 6, 6)
         l_strings.setSpacing(6)
 
-        self.strings_table = QTableWidget()
+        self.strings_table = KSharkTableWidget()
         self.strings_table.setColumnCount(3)
         self.strings_table.setHorizontalHeaderLabels(["Offset", "Length", "Extracted ASCII / UTF-8 String"])
         self.strings_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -252,21 +253,17 @@ class BytePayloadInspectorPane(QWidget):
         self.set_event_data(None)
 
     def set_font_size(self, size: float):
-        """Updates monospace font size dynamically across hex editor and tables."""
+        """Updates monospace font size dynamically across hex editor and payload tables."""
         font = get_monospace_font(size=size)
-        self.setFont(font)
-
-    def setFont(self, font: QFont):
-        super().setFont(font)
-        if hasattr(self, "hex_editor"):
+        if hasattr(self, "hex_editor") and self.hex_editor is not None:
             self.hex_editor.setFont(font)
-        if hasattr(self, "decode_table"):
+        if hasattr(self, "decode_table") and self.decode_table is not None:
             self.decode_table.setFont(font)
-        if hasattr(self, "strings_table"):
+        if hasattr(self, "strings_table") and self.strings_table is not None:
             self.strings_table.setFont(font)
-        if hasattr(self, "entropy_table"):
+        if hasattr(self, "entropy_table") and self.entropy_table is not None:
             self.entropy_table.setFont(font)
-        if hasattr(self, "asn1_view"):
+        if hasattr(self, "asn1_view") and self.asn1_view is not None:
             self.asn1_view.setFont(font)
 
     def highlight_byte_range(self, offset: int, length: int):

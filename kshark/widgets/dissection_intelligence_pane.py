@@ -23,6 +23,7 @@ import os
 from kshark.models.detail_tree_model import DetailTreeModel
 from kshark.core.theme import ThemeManager, get_ui_font, get_monospace_font
 from kshark.resources.icons import KSharkIcons
+from kshark.widgets.scroll_views import KSharkTreeView, KSharkTableWidget
 
 
 class DissectionIntelligencePane(QWidget):
@@ -95,7 +96,7 @@ class DissectionIntelligencePane(QWidget):
         bar.addWidget(btn_collapse)
         l_tree.addLayout(bar)
 
-        self.tree_view = QTreeView(tab_tree)
+        self.tree_view = KSharkTreeView(tab_tree)
         self.tree_view.setObjectName("detailTreeView")
         self.tree_view.setModel(self.model)
         self.tree_view.setHeaderHidden(False)
@@ -227,7 +228,7 @@ class DissectionIntelligencePane(QWidget):
         l_proc.setContentsMargins(8, 8, 8, 8)
         l_proc.setSpacing(6)
 
-        self.proc_table = QTableWidget()
+        self.proc_table = KSharkTableWidget()
         self.proc_table.setColumnCount(2)
         self.proc_table.setHorizontalHeaderLabels(["Process Property", "Runtime Value"])
         self.proc_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -243,7 +244,7 @@ class DissectionIntelligencePane(QWidget):
         l_metrics.setContentsMargins(8, 8, 8, 8)
         l_metrics.setSpacing(6)
 
-        self.metrics_table = QTableWidget()
+        self.metrics_table = KSharkTableWidget()
         self.metrics_table.setColumnCount(3)
         self.metrics_table.setHorizontalHeaderLabels(["Feature Dimension", "Measured Value", "Operational Significance"])
         self.metrics_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)

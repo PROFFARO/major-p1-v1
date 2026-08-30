@@ -1,17 +1,22 @@
 """
-KShark Accordion Frames — Go To Event Frame matching ui/kshark/kshark_main_window.ui.
+KShark Accordion Frames — Go To Packet / Event Frame matching Wireshark UX.
 """
 
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpacerItem, QSizePolicy
 from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtGui import QKeyEvent
+
+from kshark.resources.icons import KSharkIcons
+from kshark.core.theme import get_ui_font
 
 
 class GoToFrame(QFrame):
     """
-    KShark Go To Event # Accordion Frame.
+    KShark 'Go to specified packet' Accordion Frame.
+    Matches Wireshark's Go to Packet bar with high fidelity.
     """
 
-    goToEventTriggered = pyqtSignal(int)  # 1-indexed event number
+    goToEventTriggered = pyqtSignal(int)  # 1-indexed packet / event number
     cancelTriggered = pyqtSignal()
 
     def __init__(self, parent=None):
@@ -22,28 +27,46 @@ class GoToFrame(QFrame):
 
     def _init_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 3, 8, 3)
+        layout.setContentsMargins(12, 4, 12, 4)
         layout.setSpacing(8)
 
         layout.addSpacerItem(QSpacerItem(40, 10, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
 
-        self.label = QLabel("Event:", self)
+        self.label = QLabel("Packet number:", self)
+        self.label.setFont(get_ui_font(size=8.5, bold=True))
         layout.addWidget(self.label)
 
         self.input_field = QLineEdit(self)
-        self.input_field.setPlaceholderText("Event #")
-        self.input_field.setFixedWidth(120)
+        self.input_field.setPlaceholderText("e.g. 1")
+        self.input_field.setFixedWidth(130)
+        self.input_field.setFont(get_ui_font(size=8.5))
         self.input_field.returnPressed.connect(self._on_go)
         layout.addWidget(self.input_field)
 
-        self.btn_go = QPushButton("Go to event", self)
+        self.btn_go = QPushButton("Go to packet", self)
+        self.btn_go.setIcon(KSharkIcons.go_to_packet())
+        self.btn_go.setFont(get_ui_font(size=8.5, bold=True))
         self.btn_go.setDefault(True)
         self.btn_go.clicked.connect(self._on_go)
         layout.addWidget(self.btn_go)
 
         self.btn_cancel = QPushButton("Cancel", self)
+        self.btn_cancel.setFont(get_ui_font(size=8.5))
         self.btn_cancel.clicked.connect(self._on_cancel)
         layout.addWidget(self.btn_cancel)
+
+    def show_with_focus(self):
+        """Displays the frame and focuses the packet number input field."""
+        self.show()
+        self.input_field.selectAll()
+        self.input_field.setFocus()
+
+    def keyPressEvent(self, event: QKeyEvent):
+        if event.key() == Qt.Key.Key_Escape:
+            self._on_cancel()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def _on_go(self):
         text = self.input_field.text().strip()
@@ -58,3 +81,4 @@ class GoToFrame(QFrame):
     def _on_cancel(self):
         self.hide()
         self.cancelTriggered.emit()
+

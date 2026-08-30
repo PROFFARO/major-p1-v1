@@ -85,7 +85,6 @@ class DetailTreeModel(QAbstractItemModel):
         """Updates fonts dynamically across the hierarchical dissection tree."""
         self.mono_font = get_monospace_font(size=size)
         self.header_font = get_ui_font(size=size, bold=True)
-        self.layoutChanged.emit()
 
     def set_search_filter(self, filter_text: str):
         self._search_filter = filter_text.strip().lower()

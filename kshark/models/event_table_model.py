@@ -357,5 +357,4 @@ class EventTableModel(QAbstractTableModel):
     def set_font_size(self, size: float):
         """Updates monospace font size dynamically across the event table."""
         self.mono_font = get_monospace_font(size=size)
-        self.layoutChanged.emit()
 

@@ -1,5 +1,8 @@
 """
-KShark — System Call & eBPF Kernel Observability Analyzer.
+KShark — High-Performance Linux Kernel & eBPF-ML Security Observability Platform.
 """
 
-__version__ = "4.7.3"
+__version__ = "0.0.1"
+__author__ = "Dayananda Bindhani"
+__license__ = "GPL-2.0-or-later"
+__description__ = "KShark — High-Performance Linux Kernel & eBPF-ML Security Observability Platform"

@@ -25,6 +25,7 @@ class MainToolBar(QToolBar):
     reloadFileTriggered = pyqtSignal()
 
     findTriggered = pyqtSignal()
+    goToPacketTriggered = pyqtSignal()
     goPrevTriggered = pyqtSignal()
     goNextTriggered = pyqtSignal()
     goFirstTriggered = pyqtSignal()
@@ -82,6 +83,9 @@ class MainToolBar(QToolBar):
         # 3. Navigation Controls
         self.act_find = self.addAction(KSharkIcons.search_find(), "Find an event... (Ctrl+F)")
         self.act_find.triggered.connect(self.findTriggered)
+
+        self.act_goto = self.addAction(KSharkIcons.go_to_packet(), "Go to specified packet (Ctrl+G)")
+        self.act_goto.triggered.connect(self.goToPacketTriggered)
 
         self.act_prev = self.addAction(KSharkIcons.go_previous(), "Go to the previous event (Ctrl+Up)")
         self.act_prev.triggered.connect(self.goPrevTriggered)

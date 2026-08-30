@@ -626,6 +626,7 @@ def main():
         description="Unified System Orchestrator & Enterprise Command Center — eBPF Security System",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    parser.add_argument("-v", "--version", action="store_true", help="Display KShark version and author details")
     parser.add_argument("--config", type=str, default=None, help="Path to custom YAML configuration file (e.g. sec-engine.yaml)")
     parser.add_argument("--dry-run", action="store_true", help="Log detection actions without applying kernel LSM PID blocks")
     parser.add_argument("--no-agent", action="store_true", help="Do not spawn Go eBPF agent background subprocess")
@@ -639,6 +640,11 @@ def main():
     parser.add_argument("--gui", action="store_true", help="Launch KShark Desktop Observability GUI")
 
     args = parser.parse_args()
+
+    if args.version:
+        from kshark.app import print_version
+        print_version()
+        sys.exit(0)
 
     if args.gui:
         from kshark.app import run_app

@@ -233,51 +233,81 @@ class KSharkIcons:
         return cls._render_svg(svg, 16)
 
     @classmethod
-    def go_previous(cls) -> QIcon:
+    def go_to_packet(cls) -> QIcon:
+        """Exact Wireshark 'Go to specified packet' document pointer icon."""
         svg = """<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
-            <path d="M 12,3 L 4,8 L 12,13 Z" fill="#0EA773"/>
+            <!-- Document Frame -->
+            <rect x="3" y="1" width="11" height="14" rx="1.5" fill="#FAFAFA" stroke="#546E7A" stroke-width="1.1"/>
+            <!-- Document Lines -->
+            <line x1="5.5" y1="3.5" x2="12" y2="3.5" stroke="#37474F" stroke-width="1" stroke-linecap="round"/>
+            <line x1="5.5" y1="5.5" x2="12" y2="5.5" stroke="#37474F" stroke-width="1" stroke-linecap="round"/>
+            <!-- Highlighted Target Packet / Row (Yellow) -->
+            <rect x="7" y="7" width="5.5" height="2" fill="#F1C40F" rx="0.3"/>
+            <!-- Bottom Document Lines -->
+            <line x1="5.5" y1="10.5" x2="12" y2="10.5" stroke="#37474F" stroke-width="1" stroke-linecap="round"/>
+            <line x1="5.5" y1="12.5" x2="12" y2="12.5" stroke="#37474F" stroke-width="1" stroke-linecap="round"/>
+            <!-- Green Right-Pointing Arrow -->
+            <path d="M 0.8,6.5 L 4,6.5 L 4,4.5 L 7.5,8 L 4,11.5 L 4,9.5 L 0.8,9.5 Z" fill="#2ECC71" stroke="#1E824C" stroke-width="0.7" stroke-linejoin="round"/>
         </svg>"""
         return cls._render_svg(svg, 16)
 
+    @classmethod
+    def go_previous(cls) -> QIcon:
+        """Wireshark Go to Previous Packet icon (Green Up Arrow with Top Bar)."""
+        svg = """<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+            <line x1="3" y1="2" x2="13" y2="2" stroke="#546E7A" stroke-width="1.8" stroke-linecap="round"/>
+            <path d="M 8,4.5 L 3.5,9.5 L 6.5,9.5 L 6.5,14 L 9.5,14 L 9.5,9.5 L 12.5,9.5 Z" fill="#2ECC71" stroke="#1E824C" stroke-width="0.7" stroke-linejoin="round"/>
+        </svg>"""
+        return cls._render_svg(svg, 16)
 
     @classmethod
     def go_next(cls) -> QIcon:
+        """Wireshark Go to Next Packet icon (Green Down Arrow with Bottom Bar)."""
         svg = """<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
-            <path d="M 4,3 L 12,8 L 4,13 Z" fill="#0EA773"/>
+            <path d="M 8,11.5 L 3.5,6.5 L 6.5,6.5 L 6.5,2 L 9.5,2 L 9.5,6.5 L 12.5,6.5 Z" fill="#2ECC71" stroke="#1E824C" stroke-width="0.7" stroke-linejoin="round"/>
+            <line x1="3" y1="14" x2="13" y2="14" stroke="#546E7A" stroke-width="1.8" stroke-linecap="round"/>
         </svg>"""
         return cls._render_svg(svg, 16)
 
     @classmethod
     def go_first(cls) -> QIcon:
         svg = """<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
-            <rect x="2" y="3" width="2.5" height="10" fill="#0EA773"/>
-            <path d="M 13,3 L 6,8 L 13,13 Z" fill="#0EA773"/>
+            <rect x="2" y="3" width="2" height="10" fill="#2ECC71" stroke="#1E824C" stroke-width="0.6"/>
+            <path d="M 13,3 L 5.5,8 L 13,13 Z" fill="#2ECC71" stroke="#1E824C" stroke-width="0.6"/>
         </svg>"""
         return cls._render_svg(svg, 16)
 
     @classmethod
     def go_last(cls) -> QIcon:
         svg = """<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
-            <path d="M 3,3 L 10,8 L 3,13 Z" fill="#0EA773"/>
-            <rect x="11.5" y="3" width="2.5" height="10" fill="#0EA773"/>
+            <path d="M 3,3 L 10.5,8 L 3,13 Z" fill="#2ECC71" stroke="#1E824C" stroke-width="0.6"/>
+            <rect x="12" y="3" width="2" height="10" fill="#2ECC71" stroke="#1E824C" stroke-width="0.6"/>
         </svg>"""
         return cls._render_svg(svg, 16)
 
     @classmethod
     def auto_scroll(cls) -> QIcon:
+        """Wireshark Auto-Scroll icon (Document with lines and bottom blue marker)."""
         svg = """<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
-            <line x1="8" y1="2" x2="8" y2="11" stroke="#0E9AA7" stroke-width="2"/>
-            <path d="M 4,9 L 8,14 L 12,9 Z" fill="#0E9AA7"/>
-            <line x1="3" y1="14.5" x2="13" y2="14.5" stroke="#0A2A32" stroke-width="1.5"/>
+            <rect x="2" y="1" width="12" height="14" rx="1.5" fill="#FAFAFA" stroke="#546E7A" stroke-width="1.1"/>
+            <line x1="4.5" y1="3.5" x2="11.5" y2="3.5" stroke="#37474F" stroke-width="1"/>
+            <line x1="4.5" y1="5.5" x2="11.5" y2="5.5" stroke="#37474F" stroke-width="1"/>
+            <line x1="4.5" y1="7.5" x2="11.5" y2="7.5" stroke="#37474F" stroke-width="1"/>
+            <line x1="4.5" y1="9.5" x2="11.5" y2="9.5" stroke="#37474F" stroke-width="1"/>
+            <path d="M 5.5,11 L 10.5,11 L 8,13.5 Z" fill="#2980B9"/>
         </svg>"""
         return cls._render_svg(svg, 16)
 
     @classmethod
     def colorize(cls) -> QIcon:
+        """Wireshark Coloring Rules icon (Document with rainbow lines)."""
         svg = """<svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
-            <rect x="2" y="2" width="12" height="3" fill="#0EA773"/>
-            <rect x="2" y="6.5" width="12" height="3" fill="#2BC1CF"/>
-            <rect x="2" y="11" width="12" height="3" fill="#F0C674"/>
+            <rect x="2" y="1" width="12" height="14" rx="1.5" fill="#FAFAFA" stroke="#546E7A" stroke-width="1.1"/>
+            <line x1="4" y1="3.5" x2="12" y2="3.5" stroke="#E74C3C" stroke-width="1.2" stroke-linecap="round"/>
+            <line x1="4" y1="5.5" x2="12" y2="5.5" stroke="#2ECC71" stroke-width="1.2" stroke-linecap="round"/>
+            <line x1="4" y1="7.5" x2="12" y2="7.5" stroke="#3498DB" stroke-width="1.2" stroke-linecap="round"/>
+            <line x1="4" y1="9.5" x2="12" y2="9.5" stroke="#9B59B6" stroke-width="1.2" stroke-linecap="round"/>
+            <line x1="4" y1="11.5" x2="12" y2="11.5" stroke="#E67E22" stroke-width="1.2" stroke-linecap="round"/>
         </svg>"""
         return cls._render_svg(svg, 16)
 

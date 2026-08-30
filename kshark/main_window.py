@@ -27,6 +27,7 @@ from kshark.widgets.main_status_bar import MainStatusBar
 from kshark.widgets.dissection_intelligence_pane import DissectionIntelligencePane
 from kshark.widgets.byte_payload_inspector import BytePayloadInspectorPane
 from kshark.widgets.welcome_page import WelcomePage
+from kshark.widgets.scroll_views import KSharkTableView, KSharkTreeView, KSharkTableWidget
 
 
 from kshark.widgets.search_frame import KSharkSearchFrame
@@ -143,8 +144,8 @@ class KSharkMainWindow(QMainWindow):
         self.master_splitter.setObjectName("masterSplitter")
         self.master_splitter.setChildrenCollapsible(False)
 
-        # Pane 1: Event List View (QTableView)
-        self.event_list_view = QTableView(self)
+        # Pane 1: Event List View (High-Precision Trackpad & Mouse Scrollable Table)
+        self.event_list_view = KSharkTableView(self)
         self.event_list_view.setObjectName("eventListView")
         self.event_list_view.setModel(self.proxy_model)
         self.event_list_view.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
@@ -478,6 +479,7 @@ class KSharkMainWindow(QMainWindow):
         self.toolbar.reloadFileTriggered.connect(self._action_reload_file)
 
         self.toolbar.findTriggered.connect(self._action_find)
+        self.toolbar.goToPacketTriggered.connect(self._action_goto_event)
         self.toolbar.goPrevTriggered.connect(self._go_prev_row)
         self.toolbar.goNextTriggered.connect(self._go_next_row)
         self.toolbar.goFirstTriggered.connect(self._go_first_row)
@@ -827,7 +829,11 @@ class KSharkMainWindow(QMainWindow):
         if 0 <= target_row < self.proxy_model.rowCount():
             idx = self.proxy_model.index(target_row, 0)
             self.event_list_view.selectRow(target_row)
-            self.event_list_view.scrollTo(idx)
+            self.event_list_view.scrollTo(idx, QTableView.ScrollHint.PositionAtCenter)
+            self.event_list_view.setCurrentIndex(idx)
+            self.status_bar.set_status_message(f"Go to Packet #{event_num}")
+        else:
+            self.status_bar.set_status_message(f"Packet #{event_num} is out of range (1 - {self.proxy_model.rowCount()})", is_error=True)
 
     def _execute_search(self, query: str, stype: str, direction: str, case_sensitive: bool):
         total = self.proxy_model.rowCount()
@@ -885,14 +891,19 @@ class KSharkMainWindow(QMainWindow):
             self.event_list_view.scrollToBottom()
 
     def _action_find(self):
-        self.search_frame.setVisible(not self.search_frame.isVisible())
-        if self.search_frame.isVisible():
+        if not self.search_frame.isHidden():
+            self.search_frame.hide()
+        else:
+            self.goto_frame.hide()
+            self.search_frame.show()
             self.search_frame.search_input.setFocus()
 
     def _action_goto_event(self):
-        self.goto_frame.setVisible(not self.goto_frame.isVisible())
-        if self.goto_frame.isVisible():
-            self.goto_frame.input_field.setFocus()
+        if not self.goto_frame.isHidden():
+            self.goto_frame.hide()
+        else:
+            self.search_frame.hide()
+            self.goto_frame.show_with_focus()
 
     def _action_toggle_mark(self):
         cur = self.event_list_view.currentIndex().row()
