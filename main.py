@@ -636,12 +636,12 @@ def main():
     parser.add_argument("--export-dataset", action="store_true", help="Enable continuous logging of raw telemetry to .jsonl dataset files")
     parser.add_argument("--auto-build-bpf", action="store_true", help="Automatically re-compile .bpf.c probes if outdated or missing")
     parser.add_argument("--non-interactive", action="store_true", help="Run in headless daemon mode without interactive CLI console")
-    parser.add_argument("--gui", action="store_true", help="Launch Stratoshark Desktop Observability GUI")
+    parser.add_argument("--gui", action="store_true", help="Launch KShark Desktop Observability GUI")
 
     args = parser.parse_args()
 
     if args.gui:
-        from stratoshark.app import run_app
+        from kshark.app import run_app
         sys.exit(run_app())
 
 

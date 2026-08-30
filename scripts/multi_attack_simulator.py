@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Comprehensive Multi-Attack Simulation Suite for Stratoshark eBPF & ML Engine.
+Comprehensive Multi-Attack Simulation Suite for KShark eBPF & ML Engine.
 
 Safely generates 4 distinct MITRE ATT&CK patterns on Linux OS:
 1. RANSOMWARE: Rapid file encryption and batch renaming in a canary test folder.
@@ -20,7 +20,7 @@ from pathlib import Path
 
 def run_ransomware_scenario(duration: int = 25):
     """Simulates ransomware encrypting canary files in a temporary sandbox."""
-    sandbox_dir = Path("/tmp/stratoshark_canary_vault")
+    sandbox_dir = Path("/tmp/kshark_canary_vault")
     sandbox_dir.mkdir(exist_ok=True)
     
     # Create 50 dummy documents
@@ -182,7 +182,7 @@ print("[Port Scanner] Sweep finished.")
 
 def main():
     print("=" * 70)
-    print("⚡ STRATOSHARK MULTI-ATTACK SCENARIO GENERATOR ⚡")
+    print("⚡ KSHARK MULTI-ATTACK SCENARIO GENERATOR ⚡")
     print("=" * 70)
 
     duration = 60

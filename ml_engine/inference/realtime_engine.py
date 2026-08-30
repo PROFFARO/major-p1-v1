@@ -160,12 +160,13 @@ class RealtimeIngestionEngine:
 
     def _run_loop(self) -> None:
         """Background thread worker loop with exponential backoff reconnects."""
-        backoff_seconds = 1.0
+        backoff_seconds = 2.0
         max_backoff = 30.0
+        first_failure_notified = False
 
         while self._running:
             try:
-                logger.info("Connecting to Go Agent WebSocket: %s", self.ws_url)
+                logger.debug("Connecting to Go Agent WebSocket: %s", self.ws_url)
 
                 self._ws_app = websocket.WebSocketApp(
                     self.ws_url,
@@ -175,31 +176,31 @@ class RealtimeIngestionEngine:
                     on_close=self._on_close,
                 )
 
-                # Blocks until connection closes (generous ping interval/timeout to prevent false drops under high EPS)
+                # Blocks until connection closes
                 self._ws_app.run_forever(ping_interval=30, ping_timeout=20)
 
                 # Reset backoff on clean loop iteration
                 if not self._running:
                     break
 
-                backoff_seconds = 1.0
-
             except Exception as e:
-                logger.error("WebSocket connection error: %s", e)
+                logger.debug("WebSocket connection error: %s", e)
 
             if self._running:
                 with self._lock:
                     self._stats["is_connected"] = False
                     self._stats["reconnect_count"] += 1
 
-                logger.warning(
-                    "WebSocket disconnected — reconnecting in %.1fs (attempt #%d)...",
-                    backoff_seconds, self._stats["reconnect_count"],
-                )
+                if not first_failure_notified:
+                    logger.info("Go Agent WebSocket stream offline (%s). Using native Linux OS telemetry collector.", self.ws_url)
+                    first_failure_notified = True
+                else:
+                    logger.debug("WebSocket reconnect attempt #%d in %.1fs...", self._stats["reconnect_count"], backoff_seconds)
+
                 sleep_start = time.time()
                 while self._running and (time.time() - sleep_start < backoff_seconds):
-                    time.sleep(0.05)
-                backoff_seconds = min(max_backoff, backoff_seconds * 2.0)
+                    time.sleep(0.1)
+                backoff_seconds = min(max_backoff, backoff_seconds * 1.5)
 
     # ─────────────────────────────────────────────────────────
     # WebSocket Event Handlers
@@ -215,11 +216,18 @@ class RealtimeIngestionEngine:
         """Called when WebSocket connection closes."""
         with self._lock:
             self._stats["is_connected"] = False
-        logger.warning("WebSocket closed [code=%s, msg=%s]", close_status_code, close_msg)
+        if close_status_code is not None:
+            logger.info("WebSocket closed [code=%s, msg=%s]", close_status_code, close_msg)
+        else:
+            logger.debug("WebSocket stream closed")
 
     def _on_error(self, ws, error):
         """Called on WebSocket error."""
-        logger.error("WebSocket error: %s", error)
+        if isinstance(error, (ConnectionRefusedError, OSError)) or "Connection refused" in str(error):
+            logger.debug("WebSocket endpoint unavailable: %s", error)
+        else:
+            logger.warning("WebSocket notice: %s", error)
+
 
     def _on_message(self, ws, message: str):
         """

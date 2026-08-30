@@ -61,7 +61,7 @@ print(f"[Worker] Pseudo-miner completed ({{count:,}} total hashes computed).")
 
     proc = subprocess.Popen([sys.executable, miner_script_path])
     print(f"[*] Pseudo-miner running as PID: {proc.pid}")
-    print("[*] Generating active OS telemetry for Stratoshark to capture...")
+    print("[*] Generating active OS telemetry for KShark to capture...")
     print(f"[*] Active for next {duration_seconds} seconds...")
 
     return proc, miner_script_path
