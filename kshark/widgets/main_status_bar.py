@@ -203,34 +203,75 @@ class MainStatusBar(QStatusBar):
         self.timeFormatChanged.emit(val)
 
 
+    # ─── Profile Configuration Registry ───────────────────────────────────
+    # Each profile defines a display filter and coloring rule set tailored
+    # for a specific forensic workflow.  The "Default" profile uses an empty
+    # filter (show all) and the standard coloring rules from ColoringEngine.
+
+    PROFILE_CONFIGS = {
+        "Default": {
+            "label": "Default (General Observability)",
+            "filter": "",
+            "description": "Full telemetry view — all events visible with standard coloring.",
+        },
+        "Incident Response": {
+            "label": "Incident Response & Malware Triage",
+            "filter": "threat.name != 'BENIGN'",
+            "description": "Filtered to threat detections only — malware triage & IR focus.",
+        },
+        "Network Forensics": {
+            "label": "Network Forensics & Sockets",
+            "filter": "evt.type in ('connect', 'socket', 'bind', 'listen', 'sendto', 'recvfrom', 'accept') or dst_ip != ''",
+            "description": "Filtered to network/socket syscalls — connection & DNS forensics.",
+        },
+        "Process Lineage": {
+            "label": "Process Lineage & PrivEsc Hunting",
+            "filter": "evt.type in ('execve', 'clone', 'fork', 'setuid', 'setgid', 'capset', 'prctl')",
+            "description": "Filtered to process lifecycle & privilege escalation events.",
+        },
+        "Filesystem": {
+            "label": "Filesystem & Ransomware Guard",
+            "filter": "evt.type in ('openat', 'write', 'read', 'unlink', 'rename', 'chmod', 'fchmod', 'truncate')",
+            "description": "Filtered to file I/O operations — ransomware behavior monitoring.",
+        },
+    }
+
     def _build_profile_menu(self) -> QMenu:
         menu = QMenu(self)
-        profiles = [
-            "Default (General Observability)",
-            "Incident Response & Malware Triage",
-            "Network Forensics & Sockets",
-            "Process Lineage & PrivEsc Hunting",
-            "Filesystem & Ransomware Guard",
-        ]
-        for prof in profiles:
-            act = menu.addAction(prof)
-            act.triggered.connect(lambda checked, p=prof: self._set_profile(p))
+        self._profile_actions = {}
+        for key, cfg in self.PROFILE_CONFIGS.items():
+            act = menu.addAction(cfg["label"])
+            act.setCheckable(True)
+            act.setChecked(key == self.current_profile)
+            act.triggered.connect(lambda checked, k=key: self._set_profile(k))
+            self._profile_actions[key] = act
 
         menu.addSeparator()
         act_new = menu.addAction("New Profile...")
         act_new.triggered.connect(self._create_new_profile)
         return menu
 
-    def _set_profile(self, profile_name: str):
-        short_name = profile_name.split("(")[0].strip()
-        self.current_profile = short_name
-        self.btn_profile.setText(f"Profile: {short_name} ▾")
-        self.profileChanged.emit(short_name)
+    def _set_profile(self, profile_key: str):
+        self.current_profile = profile_key
+        self.btn_profile.setText(f"Profile: {profile_key} ▾")
+        # Update checkmarks
+        for key, act in self._profile_actions.items():
+            act.setChecked(key == profile_key)
+        self.profileChanged.emit(profile_key)
 
     def _create_new_profile(self):
-        name, ok = QInputDialog.getText(self, "New Profile", "Enter New Profile Name:")
+        from PyQt6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self, "New Profile", "Enter custom display filter expression:")
         if ok and name.strip():
-            self._set_profile(name.strip())
+            custom_key = f"Custom"
+            self.PROFILE_CONFIGS[custom_key] = {
+                "label": f"Custom ({name.strip()[:30]})",
+                "filter": name.strip(),
+                "description": f"Custom user filter: {name.strip()}",
+            }
+            # Rebuild menu with new entry
+            self.btn_profile.setMenu(self._build_profile_menu())
+            self._set_profile(custom_key)
 
     def set_capture_state(self, state: str):
         """Sets the live engine capture state (IDLE, CAPTURING, FROZEN, PAUSED)."""
@@ -410,5 +451,9 @@ class MainStatusBar(QStatusBar):
         self.lbl_buffer.setStyleSheet(f"color: {c['fg_muted']};")
         self.btn_time.setStyleSheet(f"color: {c['fg_text']}; padding: 0 4px; background: transparent; border: none;")
         self.btn_profile.setStyleSheet(f"color: {c['brand_primary']}; padding: 0 4px; font-weight: bold; background: transparent; border: none;")
+        if self.threat_count > 0:
+            self.btn_threats.setStyleSheet("color: #FFFFFF; background-color: #C0392B; border-radius: 2px; padding: 1px 6px; font-weight: bold;")
+        else:
+            self.btn_threats.setStyleSheet(f"color: {c['accent_success']}; padding: 0 4px; font-weight: bold; background: transparent; border: none;")
         self.set_capture_state(self.capture_state)
         self.set_status_message(self.lbl_message.text())

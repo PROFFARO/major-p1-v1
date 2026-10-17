@@ -124,6 +124,14 @@ class BottomEdgeRestoreBar(QFrame):
 
         layout.addStretch(1)
 
+    def update_threat_count(self, count: int):
+        """Updates the Threat Timeline tab button label with count badge."""
+        if count > 0:
+            self.btn_timeline.tab_text = f"Threat Timeline ({count:,})"
+        else:
+            self.btn_timeline.tab_text = "Threat Timeline"
+        self.btn_timeline._update_label()
+
     def _apply_theme(self):
         c = ThemeManager.instance().get_palette_colors()
         border = c.get("border", "#283C42")

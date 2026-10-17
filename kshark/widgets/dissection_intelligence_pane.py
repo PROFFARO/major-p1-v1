@@ -114,21 +114,21 @@ class DissectionIntelligencePane(QWidget):
         self.tab_triage = QScrollArea()
         self.tab_triage.setWidgetResizable(True)
         self.tab_triage.setFrameShape(QFrame.Shape.NoFrame)
-        
+        self.tab_triage.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
         triage_container = QWidget()
+        triage_container.setStyleSheet("background: transparent;")
         l_triage = QVBoxLayout(triage_container)
         l_triage.setContentsMargins(8, 8, 8, 8)
         l_triage.setSpacing(8)
 
         # Header Status Banner
         self.banner_frame = QFrame()
-        self.banner_frame.setStyleSheet("background-color: #122228; border: 1px solid #1E3D48; border-radius: 4px; padding: 6px;")
         l_banner = QHBoxLayout(self.banner_frame)
         l_banner.setContentsMargins(8, 6, 8, 6)
 
-        self.lbl_triage_status = QLabel("BENIGN BASELINE")
+        self.lbl_triage_status = QLabel("NO SELECTION")
         self.lbl_triage_status.setFont(get_ui_font(size=11, bold=True))
-        self.lbl_triage_status.setStyleSheet("color: #2ECC71;")
 
         self.lbl_triage_proc = QLabel("Process: -")
         self.lbl_triage_proc.setFont(get_monospace_font(size=9))
@@ -160,7 +160,6 @@ class DissectionIntelligencePane(QWidget):
 
         self.lbl_mitre_tech = QLabel("T1059 — Baseline System Activity")
         self.lbl_mitre_tech.setFont(get_monospace_font(size=9))
-        self.lbl_mitre_tech.setStyleSheet("color: #0E9AA7; font-weight: bold;")
 
         self.lbl_mitre_tactic = QLabel("Execution / Baseline")
         self.lbl_mitre_tactic.setFont(get_ui_font(size=9))
@@ -173,7 +172,6 @@ class DissectionIntelligencePane(QWidget):
         self.mitre_desc_edit.setReadOnly(True)
         self.mitre_desc_edit.setFont(get_ui_font(size=8))
         self.mitre_desc_edit.setMaximumHeight(50)
-        self.mitre_desc_edit.setStyleSheet("background-color: #0B1317; color: #E0E0E0; border: 1px solid #1A2830; padding: 2px;")
         l_mitre_card.addWidget(self.mitre_desc_edit)
         cards_layout.addWidget(grp_mitre, stretch=1)
 
@@ -188,14 +186,13 @@ class DissectionIntelligencePane(QWidget):
         self.cmd_box.setReadOnly(True)
         self.cmd_box.setFont(get_monospace_font(size=8))
         self.cmd_box.setMaximumHeight(65)
-        self.cmd_box.setStyleSheet("background-color: #0B1317; color: #E0E0E0; border: 1px solid #1A2830; padding: 2px;")
         l_remedy.addWidget(self.cmd_box)
 
-        btn_copy_cmd = QPushButton("Copy Containment Script")
-        btn_copy_cmd.setFont(get_ui_font(size=8))
-        btn_copy_cmd.setFixedHeight(22)
-        btn_copy_cmd.clicked.connect(self._copy_containment_script)
-        l_remedy.addWidget(btn_copy_cmd)
+        self.btn_copy_cmd = QPushButton("Copy Containment Script")
+        self.btn_copy_cmd.setFont(get_ui_font(size=8))
+        self.btn_copy_cmd.setFixedHeight(22)
+        self.btn_copy_cmd.clicked.connect(self._copy_containment_script)
+        l_remedy.addWidget(self.btn_copy_cmd)
         cards_layout.addWidget(grp_remedy, stretch=1)
 
         l_triage.addLayout(cards_layout)
@@ -207,13 +204,14 @@ class DissectionIntelligencePane(QWidget):
         l_evidence = QVBoxLayout(grp_evidence)
         l_evidence.setContentsMargins(6, 6, 6, 6)
 
-        self.evidence_table = QTableWidget()
+        self.evidence_table = KSharkTableWidget()
         self.evidence_table.setColumnCount(3)
         self.evidence_table.setHorizontalHeaderLabels(["Indicator / Target", "Observed Value", "Forensic Assessment"])
         self.evidence_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.evidence_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.evidence_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.evidence_table.setFont(get_monospace_font(size=8))
+        self.evidence_table.setAlternatingRowColors(True)
         self.evidence_table.setMaximumHeight(130)
         l_evidence.addWidget(self.evidence_table)
         l_triage.addWidget(grp_evidence)
@@ -259,6 +257,8 @@ class DissectionIntelligencePane(QWidget):
 
     def _apply_theme(self):
         c = ThemeManager.instance().get_palette_colors()
+        is_dark = ThemeManager.is_dark()
+
         self.btn_min.setStyleSheet(f"""
             QPushButton {{
                 background-color: transparent;
@@ -273,6 +273,97 @@ class DissectionIntelligencePane(QWidget):
                 border-color: {c['border']};
             }}
         """)
+
+        # Dynamic theming for Threat Triage text boxes and controls
+        box_style = f"background-color: {c['bg_input']}; color: {c['fg_text']}; border: 1px solid {c['border']}; border-radius: 3px; padding: 4px;"
+        self.mitre_desc_edit.setStyleSheet(box_style)
+        self.cmd_box.setStyleSheet(box_style)
+
+        if is_dark:
+            btn_style = f"""
+                QPushButton {{
+                    background-color: {c['bg_alt']};
+                    color: {c['fg_text']};
+                    border: 1px solid {c['border']};
+                    border-radius: 3px;
+                    padding: 2px 8px;
+                }}
+                QPushButton:hover {{
+                    background-color: {c['brand_primary']};
+                    color: #000000;
+                    border-color: {c['brand_primary']};
+                }}
+            """
+        else:
+            btn_style = f"""
+                QPushButton {{
+                    background-color: #F1F5F9;
+                    color: {c['fg_text']};
+                    border: 1px solid {c['border']};
+                    border-radius: 3px;
+                    padding: 2px 8px;
+                }}
+                QPushButton:hover {{
+                    background-color: #E2E8F0;
+                    border-color: #94A3B8;
+                }}
+            """
+        self.btn_copy_cmd.setStyleSheet(btn_style)
+        self.lbl_mitre_tech.setStyleSheet(f"color: {c['brand_primary']}; font-weight: bold;")
+        self.lbl_mitre_tactic.setStyleSheet(f"color: {c['fg_text']};")
+
+        # Update banner styling
+        self._update_banner_style()
+
+        # If an event is selected, re-populate to refresh item foregrounds with theme
+        if self._current_event:
+            self._populate_triage(self._current_event)
+            self._populate_proc(self._current_event)
+            self._populate_metrics(self._current_event)
+
+    def _update_banner_style(self):
+        is_dark = ThemeManager.is_dark()
+        event = self._current_event
+
+        if not event:
+            if is_dark:
+                self.banner_frame.setStyleSheet("background-color: #141A1D; border: 1px solid #2E3A40; border-radius: 4px; padding: 6px;")
+                self.lbl_triage_status.setStyleSheet("color: #8B9BA2; font-weight: bold;")
+                self.lbl_triage_proc.setStyleSheet("color: #8B9BA2;")
+                self.lbl_triage_conf.setStyleSheet("color: #8B9BA2;")
+            else:
+                self.banner_frame.setStyleSheet("background-color: #F1F5F9; border: 1px solid #CBD5E1; border-radius: 4px; padding: 6px;")
+                self.lbl_triage_status.setStyleSheet("color: #64748B; font-weight: bold;")
+                self.lbl_triage_proc.setStyleSheet("color: #64748B;")
+                self.lbl_triage_conf.setStyleSheet("color: #64748B;")
+            return
+
+        threat = str(event.get("threat_name") or event.get("threat_type") or "BENIGN")
+        is_threat = threat != "BENIGN"
+
+        if is_threat:
+            if is_dark:
+                self.lbl_triage_status.setStyleSheet("color: #FF7070; font-weight: bold;")
+                self.banner_frame.setStyleSheet("background-color: #3A1414; border: 1px solid #782626; border-radius: 4px; padding: 6px;")
+                self.lbl_triage_proc.setStyleSheet("color: #D8E2E6;")
+                self.lbl_triage_conf.setStyleSheet("color: #FFA850; font-weight: bold;")
+            else:
+                self.lbl_triage_status.setStyleSheet("color: #DC2626; font-weight: bold;")
+                self.banner_frame.setStyleSheet("background-color: #FEE2E2; border: 1px solid #FCA5A5; border-radius: 4px; padding: 6px;")
+                self.lbl_triage_proc.setStyleSheet("color: #0F172A;")
+                self.lbl_triage_conf.setStyleSheet("color: #B91C1C; font-weight: bold;")
+        else:
+            if is_dark:
+                self.lbl_triage_status.setStyleSheet("color: #22C55E; font-weight: bold;")
+                self.banner_frame.setStyleSheet("background-color: #143828; border: 1px solid #22C55E; border-radius: 4px; padding: 6px;")
+                self.lbl_triage_proc.setStyleSheet("color: #D8E2E6;")
+                self.lbl_triage_conf.setStyleSheet("color: #8B9BA2;")
+            else:
+                self.lbl_triage_status.setStyleSheet("color: #16A34A; font-weight: bold;")
+                self.banner_frame.setStyleSheet("background-color: #DCFCE7; border: 1px solid #86EFAC; border-radius: 4px; padding: 6px;")
+                self.lbl_triage_proc.setStyleSheet("color: #0F172A;")
+                self.lbl_triage_conf.setStyleSheet("color: #15803D;")
+
     def set_font_size(self, size: float):
         """Updates font size across the dissection tree, metrics table, and sub-views."""
         font = get_monospace_font(size=size)
@@ -296,7 +387,6 @@ class DissectionIntelligencePane(QWidget):
 
         if not event:
             self.lbl_triage_status.setText("NO SELECTION")
-            self.lbl_triage_status.setStyleSheet("color: #888888;")
             self.lbl_triage_proc.setText("Process: -")
             self.lbl_triage_conf.setText("Confidence: 0.0%")
             self.mitre_desc_edit.setPlainText("No event selected.")
@@ -305,6 +395,7 @@ class DissectionIntelligencePane(QWidget):
             self.evidence_table.setRowCount(0)
             self.proc_table.setRowCount(0)
             self.metrics_table.setRowCount(0)
+            self._update_banner_style()
             return
 
         self._populate_triage(event)
@@ -323,6 +414,7 @@ class DissectionIntelligencePane(QWidget):
             self.tree_view.expandAll()
 
     def _populate_triage(self, event: Dict[str, Any]):
+        is_dark = ThemeManager.is_dark()
         threat = str(event.get("threat_name") or event.get("threat_type") or "BENIGN")
         conf = float(event.get("confidence", 0.0))
         pid = event.get("pid", 0)
@@ -336,15 +428,12 @@ class DissectionIntelligencePane(QWidget):
 
         if is_threat:
             self.lbl_triage_status.setText(f"THREAT: {threat}")
-            self.lbl_triage_status.setStyleSheet("color: #E74C3C; font-weight: bold;")
-            self.banner_frame.setStyleSheet("background-color: #2D1414; border: 1px solid #5C1D1D; border-radius: 4px; padding: 6px;")
         else:
             self.lbl_triage_status.setText("BENIGN BASELINE")
-            self.lbl_triage_status.setStyleSheet("color: #2ECC71; font-weight: bold;")
-            self.banner_frame.setStyleSheet("background-color: #122228; border: 1px solid #1E3D48; border-radius: 4px; padding: 6px;")
 
         self.lbl_triage_proc.setText(f"Target: {comm} (PID {pid}, PPID {ppid})")
         self.lbl_triage_conf.setText(f"ML Confidence: {conf*100:.1f}%")
+        self._update_banner_style()
 
         mitre_map = {
             "RANSOMWARE": ("T1486 — Data Encrypted for Impact", "Impact", "High-frequency file writes and encryption burst detected.", f"# Isolate network interface\nsudo ip link set dev eth0 down\n# Terminate malicious PID tree\nsudo kill -9 {pid}"),
@@ -382,7 +471,7 @@ class DissectionIntelligencePane(QWidget):
             self.evidence_table.setItem(row, 0, QTableWidgetItem(k))
             item_v = QTableWidgetItem(v)
             if is_threat and (k in ("Process Executable", "Network Socket") and v != "-"):
-                item_v.setForeground(QColor("#E74C3C"))
+                item_v.setForeground(QColor("#FF7070" if is_dark else "#DC2626"))
             self.evidence_table.setItem(row, 1, item_v)
             self.evidence_table.setItem(row, 2, QTableWidgetItem(desc_ev))
 

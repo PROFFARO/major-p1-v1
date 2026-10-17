@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import time
 
 from kshark.core.coloring_engine import ColoringEngine
-from kshark.core.theme import get_monospace_font
+from kshark.core.theme import ThemeManager, get_monospace_font
 from kshark.core.syscall_table import resolve_syscall_name
 
 

@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QTableView, QTreeView, QHeaderView, QFileDialog, QMessageBox, QMenu, QToolBar
 )
 from PyQt6.QtGui import QAction, QKeySequence, QIcon, QBrush, QColor
-from PyQt6.QtCore import Qt, QModelIndex, QByteArray, QTimer
+from PyQt6.QtCore import Qt, QModelIndex, QByteArray, QTimer, QSettings
 
 from typing import Optional, Dict, Any
 import os
@@ -51,6 +51,7 @@ from kshark.dialogs.follow_stream_dialog import FollowStreamDialog
 from kshark.dialogs.expert_info_dialog import ExpertInfoDialog
 from kshark.dialogs.edit_comment_dialog import EditCommentDialog
 from kshark.resources.icons import KSharkIcons
+from kshark.core.syscall_table import resolve_syscall_name
 
 
 
@@ -108,26 +109,38 @@ class KSharkMainWindow(QMainWindow):
         self.filter_toolbar.addWidget(self.filter_bar)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.filter_toolbar)
 
-        # Central Widget & Master Stack
+        # Central Workspace Shell Widget
         self.central_widget = QWidget(self)
         self.setCentralWidget(self.central_widget)
 
-        self.central_layout = QVBoxLayout(self.central_widget)
+        shell_layout = QHBoxLayout(self.central_widget)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(0)
+
+        # Main Vertical Content Container (Accordion frames + Master Stack)
+        main_content_widget = QWidget(self.central_widget)
+        self.central_layout = QVBoxLayout(main_content_widget)
         self.central_layout.setContentsMargins(0, 0, 0, 0)
         self.central_layout.setSpacing(0)
 
         # Accordion Frames (Go to & Search)
-        self.goto_frame = GoToFrame(self)
+        self.goto_frame = GoToFrame(main_content_widget)
         self.goto_frame.hide()
         self.central_layout.addWidget(self.goto_frame)
 
-        self.search_frame = KSharkSearchFrame(self)
+        self.search_frame = KSharkSearchFrame(main_content_widget)
         self.search_frame.hide()
         self.central_layout.addWidget(self.search_frame)
 
         # Master Stack (View 0: Welcome Page | View 1: 3-Pane Capture)
-        self.master_stack = QStackedWidget(self)
+        self.master_stack = QStackedWidget(main_content_widget)
         self.central_layout.addWidget(self.master_stack, stretch=1)
+
+        shell_layout.addWidget(main_content_widget, stretch=1)
+
+        # Right Edge Restore Bar
+        self.right_restore_bar = RightEdgeRestoreBar(self.central_widget)
+        shell_layout.addWidget(self.right_restore_bar)
 
         # View 0: Welcome Page
         self.welcome_page = WelcomePage(self)
@@ -204,19 +217,6 @@ class KSharkMainWindow(QMainWindow):
 
         self.master_stack.addWidget(self.capture_container)
         self.master_stack.setCurrentIndex(0)
-
-        # Workspace Shell Widget with Right Edge Restore Bar
-        shell_widget = QWidget(self)
-        shell_layout = QHBoxLayout(shell_widget)
-        shell_layout.setContentsMargins(0, 0, 0, 0)
-        shell_layout.setSpacing(0)
-
-        shell_layout.addWidget(self.master_stack, stretch=1)
-
-        self.right_restore_bar = RightEdgeRestoreBar(self)
-        shell_layout.addWidget(self.right_restore_bar)
-
-        self.setCentralWidget(shell_widget)
 
         # Status Bar
         self.status_bar = MainStatusBar(self)
@@ -519,6 +519,9 @@ class KSharkMainWindow(QMainWindow):
 
         # Status Bar Signals
         self.status_bar.timeFormatChanged.connect(self._set_time_format)
+        self.status_bar.profileChanged.connect(self._on_profile_changed)
+        self.status_bar.threatsClicked.connect(self._on_status_bar_threats_clicked)
+        self.status_bar.eventsClicked.connect(self._action_open_threat_summary)
         # Edge Restore Bar connections
         self.bottom_restore_bar.toggleTimelineRequested.connect(self.toggle_threat_timeline)
         self.bottom_restore_bar.toggleDissectionRequested.connect(self.toggle_dissection_pane)
@@ -593,12 +596,41 @@ class KSharkMainWindow(QMainWindow):
 
 
     def _on_status_bar_threats_clicked(self):
-        """Jumps to the first threat or applies a threat filter."""
-        if self.table_model.threat_count > 0 or self.status_bar.threat_count > 0:
-            self.filter_bar.set_filter_text('threat.name != "BENIGN"')
-            self.status_bar.set_status_message("Filtered by detected security threats.")
+        """Jumps to the first/next threat, opens Threat Timeline dock, and applies/toggles threat filter."""
+        threat_count = max(self.table_model.threat_count, self.status_bar.threat_count, len(self.dock_timeline._markers))
+
+        # Ensure Threat Timeline dock is visible and sync bottom edge restore bar
+        if not self.dock_timeline.isVisible():
+            self.dock_timeline.setVisible(True)
+            self.bottom_restore_bar.btn_timeline.set_component_active(True)
+
+        if threat_count > 0:
+            current_filter = self.filter_bar.entry.text().strip()
+            threat_filter = 'threat.name != "BENIGN"'
+
+            # If not yet filtering by threats, apply the threat filter
+            if current_filter != threat_filter:
+                self.filter_bar.set_filter_text(threat_filter)
+                self.status_bar.set_status_message(f"Filtered view by {threat_count:,} detected security threats.")
+            else:
+                # If already filtered, cycle downwards to next threat
+                self._go_next_threat()
+
+            # Select and highlight current or first threat row in the list
+            if self.proxy_model.rowCount() > 0:
+                cur_idx = self.event_list_view.currentIndex()
+                target_row = cur_idx.row() if cur_idx.isValid() else 0
+                idx = self.proxy_model.index(target_row, 0)
+                self.event_list_view.selectRow(target_row)
+                self.event_list_view.scrollTo(idx, self.event_list_view.ScrollHint.PositionAtCenter)
+                ev = self.proxy_model.get_event_at_proxy_row(target_row)
+                if ev:
+                    self.detail_pane.set_event(ev)
+                    self.byte_view.set_event_data(ev)
+                    if hasattr(self.detail_pane, "tabs") and self.detail_pane.tabs.count() > 1:
+                        self.detail_pane.tabs.setCurrentIndex(1)
         else:
-            self.status_bar.set_status_message("No active security threats detected.")
+            self.status_bar.set_status_message("Threat Timeline & Incident Triage opened. No active security threats detected.")
 
 
     def _on_profile_changed(self, profile: str):
@@ -662,14 +694,14 @@ class KSharkMainWindow(QMainWindow):
         self.status_bar.set_capture_state("IDLE")
         self.status_bar.set_status_message("Capture stopped.")
         self._live_event_buffer.clear()
-        self.status_bar.update_stats(self.table_model.rowCount(), self.proxy_model.rowCount(), self.status_bar.threat_count, 0.0)
+        threats = max(self.table_model.threat_count, len(self.dock_timeline._markers))
+        self.status_bar.update_stats(self.table_model.rowCount(), self.proxy_model.rowCount(), threats, 0.0)
+        self.bottom_restore_bar.update_threat_count(threats)
         self.bridge.stop_capture()
-
-
-
 
     def restart_capture(self):
         self.table_model.clear()
+        self.dock_timeline.clear_feed()
         self.detail_pane.clear()
         self.byte_view.clear()
         self.stop_capture()
@@ -678,10 +710,11 @@ class KSharkMainWindow(QMainWindow):
     def _action_close_capture(self):
         self.stop_capture()
         self.table_model.clear()
+        self.dock_timeline.clear_feed()
         self.detail_pane.clear()
         self.byte_view.clear()
-        self.master_stack.setCurrentIndex(0)
-
+        self.status_bar.update_stats(0, 0, 0, 0.0)
+        self.bottom_restore_bar.update_threat_count(0)
         self.master_stack.setCurrentIndex(0)
 
     def _handle_live_event(self, event: dict):
@@ -689,7 +722,9 @@ class KSharkMainWindow(QMainWindow):
             self.table_model.add_events_batch([event])
             total = self.table_model.rowCount()
             displayed = self.proxy_model.rowCount()
-            self.status_bar.update_stats(total, displayed, self.status_bar.threat_count, self.status_bar.eps)
+            threats = max(self.table_model.threat_count, len(self.dock_timeline._markers))
+            self.status_bar.update_stats(total, displayed, threats, self.status_bar.eps)
+            self.bottom_restore_bar.update_threat_count(threats)
             return
         self._live_event_buffer.append(event)
 
@@ -712,8 +747,9 @@ class KSharkMainWindow(QMainWindow):
 
         total = self.table_model.rowCount()
         displayed = self.proxy_model.rowCount()
-        threats = self.table_model.threat_count
+        threats = max(self.table_model.threat_count, len(self.dock_timeline._markers))
         self.status_bar.update_stats(total, displayed, threats, self.status_bar.eps)
+        self.bottom_restore_bar.update_threat_count(threats)
 
         # Check max events limit
         if getattr(self, "_max_capture_events", 0) > 0 and total >= self._max_capture_events:
@@ -727,6 +763,12 @@ class KSharkMainWindow(QMainWindow):
                 self.status_bar.set_status_message(f"Capture stopped: Reached time duration limit of {self._max_capture_duration_s}s.")
 
     def _handle_threat_detected(self, alert: dict):
+        # Flush any live event buffer first so table_model is completely up to date
+        if self._live_event_buffer:
+            batch = self._live_event_buffer
+            self._live_event_buffer = []
+            self.table_model.add_events_batch(batch)
+
         event_idx = self.table_model.rowCount() - 1
         self.dock_timeline.record_threat_marker(alert, event_index=max(0, event_idx))
         threat_name = alert.get("threat_name") or alert.get("threat_type") or "UNKNOWN"
@@ -744,6 +786,13 @@ class KSharkMainWindow(QMainWindow):
             if self.proxy_model._filter_ast is not None:
                 self.proxy_model.invalidateFilter()
 
+        # Update status bar and bottom restore bar threat metrics immediately
+        threats = max(self.table_model.threat_count, len(self.dock_timeline._markers))
+        total = self.table_model.rowCount()
+        displayed = self.proxy_model.rowCount()
+        self.status_bar.update_stats(total, displayed, threats, self.status_bar.eps)
+        self.bottom_restore_bar.update_threat_count(threats)
+
     def _on_timeline_marker_selected(self, event_index: int):
         """Seeks and selects the corresponding row in the main packet table."""
         if event_index < 0 or event_index >= self.table_model.rowCount():
@@ -751,6 +800,11 @@ class KSharkMainWindow(QMainWindow):
 
         source_idx = self.table_model.index(event_index, 0)
         proxy_idx = self.proxy_model.mapFromSource(source_idx)
+
+        if not proxy_idx.isValid():
+            # If the selected threat event is hidden by an existing filter, clear it to reveal the event
+            self.filter_bar.clear_filter()
+            proxy_idx = self.proxy_model.mapFromSource(source_idx)
 
         if proxy_idx.isValid():
             target_row = proxy_idx.row()
@@ -760,18 +814,18 @@ class KSharkMainWindow(QMainWindow):
             if event:
                 self.detail_pane.set_event(event)
                 self.byte_view.set_event_data(event)
+                if hasattr(self.detail_pane, "tabs") and self.detail_pane.tabs.count() > 1:
+                    self.detail_pane.tabs.setCurrentIndex(1)
         else:
             self.status_bar.set_status_message(f"Selected threat event #{event_index} is hidden by current display filter.", is_error=False)
-
-
-
 
     def _handle_stats_updated(self, stats: dict):
         total = self.table_model.rowCount()
         displayed = self.proxy_model.rowCount()
-        threats = self.table_model.threat_count
+        threats = max(self.table_model.threat_count, len(self.dock_timeline._markers), int(stats.get("total_threats_detected", 0)))
         eps = float(stats.get("events_per_second", self.status_bar.eps))
         self.status_bar.update_stats(total, displayed, threats, eps)
+        self.bottom_restore_bar.update_threat_count(threats)
 
     def _on_filter_applied(self, filter_text: str):
         self.proxy_model.set_display_filter(filter_text)
@@ -781,13 +835,15 @@ class KSharkMainWindow(QMainWindow):
         self.proxy_model.set_display_filter("")
         self.event_list_view.viewport().update()
         total = self.table_model.rowCount()
-        self.status_bar.update_stats(total, total, self.table_model.threat_count, self.status_bar.eps)
+        threats = max(self.table_model.threat_count, len(self.dock_timeline._markers))
+        self.status_bar.update_stats(total, total, threats, self.status_bar.eps)
+        self.bottom_restore_bar.update_threat_count(threats)
         self.status_bar.set_status_message("Display filter cleared — showing all events.")
 
-
     def _on_filter_stats_changed(self, matched: int, total: int, elapsed_ms: float):
-        threats = self.table_model.threat_count
+        threats = max(self.table_model.threat_count, len(self.dock_timeline._markers))
         self.status_bar.update_stats(total, matched, threats, self.status_bar.eps)
+        self.bottom_restore_bar.update_threat_count(threats)
         if elapsed_ms > 0:
             active_filter = self.filter_bar.entry.text().strip()
             if matched == 0 and total > 0 and active_filter:
@@ -795,6 +851,27 @@ class KSharkMainWindow(QMainWindow):
             else:
                 self.status_bar.set_status_message(f"Filter matched {matched:,} of {total:,} events ({elapsed_ms:.1f} ms)")
 
+
+    def _on_profile_changed(self, profile_key: str):
+        """Apply the selected capture/analysis profile — sets display filter and updates status."""
+        from kshark.widgets.main_status_bar import MainStatusBar
+
+        cfg = MainStatusBar.PROFILE_CONFIGS.get(profile_key)
+        if not cfg:
+            return
+
+        filter_expr = cfg.get("filter", "")
+        description = cfg.get("description", "")
+
+        # Apply or clear the display filter
+        if filter_expr:
+            self.filter_bar.set_filter_text(filter_expr, apply_immediately=True)
+        else:
+            # Default profile — clear any active filter
+            self.filter_bar.set_filter_text("", apply_immediately=False)
+            self._on_filter_cleared()
+
+        self.status_bar.set_status_message(f"Profile: {profile_key} — {description}")
 
 
     def _on_event_row_selected(self, selected, deselected):
@@ -1001,8 +1078,18 @@ class KSharkMainWindow(QMainWindow):
                         loaded_events.append(row)
 
             if loaded_events:
+                self.dock_timeline.clear_feed()
                 self.table_model.add_events_batch(loaded_events)
+                for idx, ev in enumerate(loaded_events):
+                    th = ev.get("threat_name") or ev.get("threat_type") or ev.get("agreed_threat") or ev.get("threat_class")
+                    if th and str(th).upper() not in ("BENIGN", "", "NONE"):
+                        self.dock_timeline.record_threat_marker(ev, event_index=idx)
                 self.master_stack.setCurrentIndex(1)
+                total = self.table_model.rowCount()
+                displayed = self.proxy_model.rowCount()
+                threats = max(self.table_model.threat_count, len(self.dock_timeline._markers))
+                self.status_bar.update_stats(total, displayed, threats, 0.0)
+                self.bottom_restore_bar.update_threat_count(threats)
                 self.status_bar.set_status_message(f"Loaded {len(loaded_events):,} events from {os.path.basename(path)}")
             else:
                 self.status_bar.set_status_message(f"No events found in {path}", is_error=True)
