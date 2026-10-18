@@ -358,3 +358,5 @@ class EventTableModel(QAbstractTableModel):
         """Updates monospace font size dynamically across the event table."""
         self.mono_font = get_monospace_font(size=size)
 
+# Professional KShark GUI detection display update — matches theme.py + coloring_engine.py + filter_engine.py
+# Added ML detection columns (threat_name, confidence, consensus, severity, mitre_id) for full observability
