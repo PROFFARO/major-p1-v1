@@ -249,6 +249,7 @@ LLM_PROVIDER = (os.getenv("LLM_PROVIDER") or YAML_CONFIG_DATA.get("copilot", {})
 
 # Maximum telemetry events injected into LLM context per query
 LLM_MAX_CONTEXT_EVENTS = int(os.getenv("LLM_MAX_CONTEXT_EVENTS") or YAML_CONFIG_DATA.get("copilot", {}).get("max_context_events", 200))
+LLM_MAX_OUTPUT_LENGTH = int(os.getenv("LLM_MAX_OUTPUT_LENGTH") or YAML_CONFIG_DATA.get("copilot", {}).get("max_output_length", 800))
 
 # ML Engine REST API & Storage
 REST_API_HOST = os.getenv("REST_API_HOST") or YAML_CONFIG_DATA.get("api", {}).get("host") or "0.0.0.0"

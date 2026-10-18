@@ -21,6 +21,7 @@ from PyQt6.QtCore import pyqtSignal, Qt, QThread
 
 from kshark.core.theme import ThemeManager, get_ui_font, get_monospace_font
 from ml_engine.llm_analyst.copilot import LLMSecurityCopilot
+from ml_engine.config import LLM_MAX_CONTEXT_EVENTS, LLM_MODEL_NAME, LLM_PROVIDER
 
 
 from markdown_it import MarkdownIt
@@ -62,6 +63,12 @@ class LLMCopilotWorker(QThread):
             self.responseReady.emit(prompt_type, self.prompt, formatted_html)
         except Exception as e:
             self.errorOccurred.emit(str(e))
+
+    def _format_concise_html(self, text: str) -> str:
+        """Truncate very large AI responses; keep readable and configurable."""
+        if len(text) > self.max_output_chars:
+            text = text[:self.max_output_chars] + "\n\n... [truncated — use Copy or Settings to expand]"
+        return self._format_markdown_to_html(text)
 
     def _format_markdown_to_html(self, text: str) -> str:
         """Converts markdown into clean, high-density terminal HTML with strict horizontal wrapping."""
@@ -473,7 +480,7 @@ class CopilotDock(QDockWidget):
 
         layout.addWidget(self.input_frame)
 
-        # ── 6. Bottom Utility Actions ──
+        # ── 6. Bottom Utility Actions (global profile only) ──
         bot_bar = QHBoxLayout()
         bot_bar.setSpacing(6)
 
