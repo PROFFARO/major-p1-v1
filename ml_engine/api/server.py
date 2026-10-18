@@ -14,7 +14,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from ml_engine.config import REST_API_HOST, REST_API_PORT
 from ml_engine.api.routes import router as api_router, set_api_dependencies
 from ml_engine.storage import DatabaseManager
-from ml_engine.llm_analyst.copilot import LLMSecurityCopilot
 
 logger = logging.getLogger("ml_engine.api.server")
 
@@ -26,7 +25,7 @@ from ml_engine.api.routes import get_prometheus_metrics
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(
-        title="eBPF-ML Security Engine & LLM Copilot API",
+        title="eBPF-ML Security Engine API",
         description="High-Performance REST Services & Analytical Query API for eBPF SOC Dashboard",
         version="1.0.0",
     )
@@ -56,20 +55,17 @@ class APIServerRunner:
         host: str = REST_API_HOST,
         port: int = REST_API_PORT,
         db_mgr: Optional[DatabaseManager] = None,
-        copilot: Optional[LLMSecurityCopilot] = None,
         engine=None,
         mitigator=None,
     ):
         self.host = host
         self.port = port
         self.db_mgr = db_mgr or DatabaseManager()
-        self.copilot = copilot or LLMSecurityCopilot()
         self.engine = engine
         self.mitigator = mitigator
 
         set_api_dependencies(
             db_mgr=self.db_mgr,
-            copilot=self.copilot,
             engine=self.engine,
             mitigator=self.mitigator,
         )

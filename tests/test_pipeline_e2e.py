@@ -8,7 +8,6 @@ Verifies the entire eBPF threat streaming & security observability lifecycle:
     4. ThreatDetector (RF + XGBoost + Isolation Forest Consensus)
     5. BehavioralEngine (Falco-style rule evaluation)
     6. AlertDispatcher (Alert logging & persistence)
-    7. LLMSecurityCopilot (SOC Incident Report & Remediation Command Synthesis)
 """
 
 import json
@@ -27,7 +26,6 @@ from ml_engine.models.detector import ThreatDetector
 from ml_engine.rules.behavioral_engine import BehavioralEngine
 from ml_engine.detection.alert_dispatcher import AlertDispatcher
 from ml_engine.inference.realtime_engine import RealtimeIngestionEngine
-from ml_engine.llm_analyst.copilot import LLMSecurityCopilot
 from ml_engine.storage import DatabaseManager
 
 
@@ -101,25 +99,13 @@ class TestFullPipelineE2E(unittest.TestCase):
         self.behavioral_engine = BehavioralEngine()
         self.dispatcher = AlertDispatcher(db_manager=self.db_mgr)
 
-        # 4. LLM Analyst Copilot (Offline mode for fast reproducible testing)
-        self.copilot = LLMSecurityCopilot(api_key="", base_url="")
-
-        # 5. Callback sink to capture generated SOC reports
-        self.captured_reports = []
+        # 4. Callback sink to capture generated alerts
+        self.captured_alerts = []
 
         def on_detection(alert):
-            metadata = {
-                "pid": alert.get("pid", 0),
-                "comm": alert.get("comm", "unknown"),
-                "exe_path": alert.get("exe_path", "/tmp/malware"),
-                "parent_comm": "bash",
-                "dst_ip": alert.get("dst_ip", "0.0.0.0"),
-            }
-            report = self.copilot.analyze_threat(alert, metadata)
-            remediation = self.copilot.generate_remediation(alert, metadata)
-            self.captured_reports.append((report, remediation))
+            self.captured_alerts.append(alert)
 
-        # 6. Realtime Ingestion Engine
+        # 5. Realtime Ingestion Engine
         self.engine = RealtimeIngestionEngine(
             detector=self.detector,
             behavioral_engine=self.behavioral_engine,
@@ -148,7 +134,7 @@ class TestFullPipelineE2E(unittest.TestCase):
         }
 
     def test_e2e_ransomware_pipeline_flow(self):
-        """Test full pipeline flow for Ransomware attack detection and LLM report."""
+        """Test full pipeline flow for Ransomware attack detection."""
         stream = generate_e2e_event_stream(
             pid=90001,
             comm="lockbit_encryptor",
@@ -172,12 +158,10 @@ class TestFullPipelineE2E(unittest.TestCase):
         self.assertGreater(len(recorded_alerts), 0)
         self.assertEqual(recorded_alerts[0]["pid"], 90001)
 
-        # 3. Verify LLM Copilot report generation
-        self.assertGreater(len(self.captured_reports), 0)
-        report, remediation = self.captured_reports[0]
-        self.assertIn("SOC Incident Report", report)
-        self.assertIn("90001", report)
-        self.assertIn("Containment", remediation)
+        # 3. Verify alert callback received detection
+        self.assertGreater(len(self.captured_alerts), 0)
+        self.assertEqual(self.captured_alerts[0]["pid"], 90001)
+        self.assertIn("RANSOMWARE", self.captured_alerts[0]["threat_name"])
 
     def tearDown(self):
         self.db_mgr.stop()

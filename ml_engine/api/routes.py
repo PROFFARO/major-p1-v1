@@ -14,34 +14,27 @@ from ml_engine.storage import (
     MetricsSummaryResponse,
     AlertsQueryRequest,
     UnblockRequest,
-    CopilotChatRequest,
-    CopilotChatResponse,
     DuckDBSQLQueryRequest,
-    LLMChatRecord,
     ActiveBlockRecord,
 )
-from ml_engine.llm_analyst.copilot import LLMSecurityCopilot
 
 logger = logging.getLogger("ml_engine.api.routes")
 router = APIRouter(prefix="/api/v1", tags=["eBPF-ML Security Service"])
 
 # References injected by server lifecycle initialization
 db_manager: Optional[DatabaseManager] = None
-copilot_instance: Optional[LLMSecurityCopilot] = None
 realtime_engine_ref = None
 
 
 def set_api_dependencies(
     db_mgr: DatabaseManager,
-    copilot: LLMSecurityCopilot,
     engine=None,
     mitigator=None,
     **kwargs,
 ):
     """Inject global application dependencies into API routes."""
-    global db_manager, copilot_instance, realtime_engine_ref
+    global db_manager, realtime_engine_ref
     db_manager = db_mgr
-    copilot_instance = copilot
     realtime_engine_ref = engine
 
 
@@ -103,10 +96,6 @@ def get_metrics_summary():
     if realtime_engine_ref:
         stats = realtime_engine_ref.get_stats()
 
-    copilot_mode = "ONLINE"
-    if copilot_instance:
-        copilot_mode = "ONLINE" if copilot_instance.is_available() else "OFFLINE"
-
     return MetricsSummaryResponse(
         total_events_ingested=stats.get("total_events_ingested", 0),
         events_per_second=stats.get("events_per_second", 0.0),
@@ -114,7 +103,6 @@ def get_metrics_summary():
         total_threats_detected=stats.get("total_threats_detected", 0),
         threats_by_class=stats.get("threats_by_class", {}),
         active_kernel_blocks=0,
-        copilot_status=copilot_mode,
     )
 
 
@@ -132,40 +120,6 @@ def get_audit_logs(limit: int = Query(50, ge=1, le=500)):
     sqlite_mgr = db_manager.sqlite if db_manager else SQLiteWALManager()
     logs = sqlite_mgr.get_mitigation_audit_logs(limit=limit)
     return {"audit_logs": logs, "count": len(logs)}
-
-
-@router.post("/copilot/chat", response_model=CopilotChatResponse)
-def copilot_chat(req: CopilotChatRequest):
-    """Query Universal LLM Security Analyst Copilot and persist interaction."""
-    if not copilot_instance:
-        raise HTTPException(status_code=503, detail="LLMSecurityCopilot service not initialized")
-
-    audit_history = []
-    if db_manager:
-        audit_history = db_manager.sqlite.get_mitigation_audit_logs(limit=20)
-
-    answer = copilot_instance.chat(
-        user_query=req.prompt,
-        audit_history=audit_history,
-    )
-
-    # Record chat in SQLite WAL
-    if db_manager:
-        chat_rec = LLMChatRecord(
-            sender="user",
-            prompt=req.prompt,
-            response=answer,
-            provider=copilot_instance.provider,
-            model_name=copilot_instance.model_name,
-        )
-        db_manager.sqlite.insert_chat_message(chat_rec)
-
-    return CopilotChatResponse(
-        prompt=req.prompt,
-        response=answer,
-        provider=copilot_instance.provider,
-        model_name=copilot_instance.model_name,
-    )
 
 
 @router.post("/telemetry/query")

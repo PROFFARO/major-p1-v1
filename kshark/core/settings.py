@@ -9,8 +9,24 @@ from typing import Optional, List, Dict, Any
 class KSharkSettings:
     """Manages KShark configuration profiles, geometry, preferences, and recent files."""
 
+    _instance: Optional["KSharkSettings"] = None
+
+    @classmethod
+    def instance(cls) -> "KSharkSettings":
+        if cls._instance is None:
+            cls._instance = KSharkSettings()
+        return cls._instance
+
     def __init__(self):
-        self.settings = QSettings("KShark", "KSharkObservability")
+        self._settings = QSettings("KShark", "KSharkObservability")
+
+    @property
+    def settings(self) -> QSettings:
+        try:
+            self._settings.allKeys()
+        except (AttributeError, RuntimeError):
+            self._settings = QSettings("KShark", "KSharkObservability")
+        return self._settings
 
     def get_window_geometry(self) -> Optional[QByteArray]:
         return self.settings.value("geometry")
@@ -99,3 +115,5 @@ class KSharkSettings:
 
     def set_default_filter(self, filter_text: str):
         self.settings.setValue("default_filter", filter_text)
+
+

@@ -60,7 +60,6 @@ class AboutDialog(QDialog):
                 <li><b>eBPF Probes:</b> sys_tracer, net_filter, ssl_tracer, lsm_enforcer, tetragon_lsm</li>
                 <li><b>ML Threat Detector:</b> Dual Random Forest / XGBoost + PyTorch Anomaly Models</li>
                 <li><b>Columnar Analytics:</b> DuckDB and SQLite WAL database ingestion</li>
-                <li><b>AI Copilot:</b> LLM Security Analyst Platform</li>
             </ul>
         """)
         l1.addWidget(browser1)

@@ -44,7 +44,6 @@ def print_version():
     print("Kernel Subsystem:   eBPF CO-RE Probes (Tracepoints, KProbes, LSM, TC Filter)")
     print("Inference Engine:   Real-Time Behavioral Signatures + ML Anomaly Detection")
     print("Storage Engine:     Dual DuckDB (Columnar OLAP) + SQLite (WAL Audit Store)")
-    print("Security Copilot:   Universal Multi-Provider LLM Analyst (RAG Lineage)")
     print()
     print(f"Author:             {__author__}")
     print(f"License:            {__license__}")

@@ -25,7 +25,6 @@ from ml_engine.storage.models import (
     ThreatAlertRecord,
     MitigationAuditRecord,
     ActiveBlockRecord,
-    LLMChatRecord,
 )
 
 

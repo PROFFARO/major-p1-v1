@@ -25,8 +25,4 @@ detection:
   anomaly_score_threshold: -0.3
   behavioral_rules_enabled: true
 
-copilot:
-  provider: "auto"
-  model_name: "nvidia/nemotron-3-ultra-550b-a55b:free"
-  base_url: ""
-  max_context_events: 200
+

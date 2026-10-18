@@ -5,7 +5,7 @@ Architecture:
     1. DuckDBManager: Ingests raw eBPF telemetry & 12-dim feature vectors into DuckDB columnar tables
        for sub-15ms analytical queries over millions of events.
     2. SQLiteWALManager: Persists structured threat alerts, LSM mitigation audit trails, active kernel
-       blocklists, and LLM Copilot chat histories in transactional SQLite WAL mode.
+       blocklists in transactional SQLite WAL mode.
     3. AsyncBatchDatabaseWriter: Non-blocking in-memory queue worker that micro-batches raw events
        every 200ms into DuckDB without delaying live streaming ingestion.
 """
@@ -32,7 +32,6 @@ from ml_engine.storage.models import (
     ThreatAlertRecord,
     MitigationAuditRecord,
     ActiveBlockRecord,
-    LLMChatRecord,
 )
 
 logger = logging.getLogger("ml_engine.storage.db_manager")
@@ -339,19 +338,6 @@ class SQLiteWALManager:
                 );
             """)
 
-            # 4. LLM Copilot Chat History table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS llm_chat_history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp TEXT NOT NULL,
-                    sender TEXT NOT NULL,
-                    prompt TEXT NOT NULL,
-                    response TEXT NOT NULL,
-                    provider TEXT NOT NULL,
-                    model_name TEXT NOT NULL
-                );
-            """)
-
             conn.commit()
             conn.close()
             logger.debug("SQLite WAL Transactional Store initialized at %s", self.db_path)
@@ -443,20 +429,6 @@ class SQLiteWALManager:
             conn.close()
             return affected
 
-    def insert_chat_message(self, record: LLMChatRecord) -> int:
-        """Insert LLM Copilot chat message."""
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO llm_chat_history (timestamp, sender, prompt, response, provider, model_name)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (record.timestamp, record.sender, record.prompt, record.response, record.provider, record.model_name))
-            chat_id = cursor.lastrowid
-            conn.commit()
-            conn.close()
-            return chat_id
-
     def get_alerts(self, limit: int = 50, threat_name: Optional[str] = None) -> List[Dict[str, Any]]:
         """Query recent threat alerts."""
         with self._lock:
@@ -486,16 +458,6 @@ class SQLiteWALManager:
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM active_blocks ORDER BY blocked_at DESC")
-            rows = [dict(r) for r in cursor.fetchall()]
-            conn.close()
-            return rows
-
-    def get_chat_history(self, limit: int = 20) -> List[Dict[str, Any]]:
-        """Query recent LLM copilot chat history."""
-        with self._lock:
-            conn = self._get_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM llm_chat_history ORDER BY id DESC LIMIT ?", (limit,))
             rows = [dict(r) for r in cursor.fetchall()]
             conn.close()
             return rows

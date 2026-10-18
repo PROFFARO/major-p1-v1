@@ -21,6 +21,7 @@ from typing import List, Tuple
 from kshark.core.theme import ThemeManager, get_monospace_font, get_ui_font
 from kshark.core.filter_engine import compile_filter, FIELD_ALIASES
 from kshark.resources.icons import KSharkIcons
+from kshark.core.clipboard_utils import ClipboardUtils
 
 
 class DisplayFilterEntry(QWidget):
@@ -160,6 +161,7 @@ class DisplayFilterEntry(QWidget):
         self.entry.setStyleSheet("border: none; background: transparent; color: #E0E0E0;")
         self.entry.textChanged.connect(self._on_text_changed)
         self.entry.returnPressed.connect(self._on_apply)
+        ClipboardUtils.attach_line_edit_context_menu(self.entry, is_password=False, on_clear=self._on_clear)
 
         # Autocomplete dictionary
         completer_words = [

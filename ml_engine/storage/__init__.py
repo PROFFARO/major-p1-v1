@@ -14,13 +14,10 @@ from ml_engine.storage.models import (
     ThreatAlertRecord,
     MitigationAuditRecord,
     ActiveBlockRecord,
-    LLMChatRecord,
     HealthStatusResponse,
     MetricsSummaryResponse,
     AlertsQueryRequest,
     UnblockRequest,
-    CopilotChatRequest,
-    CopilotChatResponse,
     DuckDBSQLQueryRequest,
 )
 
@@ -34,12 +31,9 @@ __all__ = [
     "ThreatAlertRecord",
     "MitigationAuditRecord",
     "ActiveBlockRecord",
-    "LLMChatRecord",
     "HealthStatusResponse",
     "MetricsSummaryResponse",
     "AlertsQueryRequest",
     "UnblockRequest",
-    "CopilotChatRequest",
-    "CopilotChatResponse",
     "DuckDBSQLQueryRequest",
 ]

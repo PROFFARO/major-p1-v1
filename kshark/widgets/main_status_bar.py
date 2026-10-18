@@ -28,10 +28,8 @@ class MainStatusBar(QStatusBar):
     """
 
     timeFormatChanged = pyqtSignal(int)
-    profileChanged = pyqtSignal(str)
     threatsClicked = pyqtSignal()
     eventsClicked = pyqtSignal()
-
 
     DEFAULT_PANEL_VISIBILITY = {
         "show_throughput": True,
@@ -39,7 +37,6 @@ class MainStatusBar(QStatusBar):
         "show_threats": True,
         "show_buffer": True,
         "show_time_format": True,
-        "show_profile": True,
     }
 
     def __init__(self, parent=None):
@@ -152,18 +149,6 @@ class MainStatusBar(QStatusBar):
         self.panel_time.layout().addWidget(self.btn_time)
         self.addPermanentWidget(self.panel_time)
 
-        # Panel 6: Capture Profile Selector
-        self.panel_profile = self._create_panel_widget()
-        self.btn_profile = QPushButton("Profile: Default ▾", self)
-        self.btn_profile.setFlat(True)
-        self.btn_profile.setFont(get_ui_font(size=8, bold=True))
-        self.btn_profile.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_profile.setStyleSheet("color: #2BC1CF; padding: 0 4px;")
-        self.btn_profile.setToolTip("Click to switch or manage Active Capture & Filtering Profiles")
-        self.btn_profile.setMenu(self._build_profile_menu())
-        self.panel_profile.layout().addWidget(self.btn_profile)
-        self.addPermanentWidget(self.panel_profile)
-
     def _create_panel_widget(self) -> QFrame:
         panel = QFrame(self)
         panel.setObjectName("statusPanel")
@@ -202,76 +187,6 @@ class MainStatusBar(QStatusBar):
         self.btn_time.setText(f"Time: {name} ▾")
         self.timeFormatChanged.emit(val)
 
-
-    # ─── Profile Configuration Registry ───────────────────────────────────
-    # Each profile defines a display filter and coloring rule set tailored
-    # for a specific forensic workflow.  The "Default" profile uses an empty
-    # filter (show all) and the standard coloring rules from ColoringEngine.
-
-    PROFILE_CONFIGS = {
-        "Default": {
-            "label": "Default (General Observability)",
-            "filter": "",
-            "description": "Full telemetry view — all events visible with standard coloring.",
-        },
-        "Incident Response": {
-            "label": "Incident Response & Malware Triage",
-            "filter": "threat.name != 'BENIGN'",
-            "description": "Filtered to threat detections only — malware triage & IR focus.",
-        },
-        "Network Forensics": {
-            "label": "Network Forensics & Sockets",
-            "filter": "evt.type in ('connect', 'socket', 'bind', 'listen', 'sendto', 'recvfrom', 'accept') or dst_ip != ''",
-            "description": "Filtered to network/socket syscalls — connection & DNS forensics.",
-        },
-        "Process Lineage": {
-            "label": "Process Lineage & PrivEsc Hunting",
-            "filter": "evt.type in ('execve', 'clone', 'fork', 'setuid', 'setgid', 'capset', 'prctl')",
-            "description": "Filtered to process lifecycle & privilege escalation events.",
-        },
-        "Filesystem": {
-            "label": "Filesystem & Ransomware Guard",
-            "filter": "evt.type in ('openat', 'write', 'read', 'unlink', 'rename', 'chmod', 'fchmod', 'truncate')",
-            "description": "Filtered to file I/O operations — ransomware behavior monitoring.",
-        },
-    }
-
-    def _build_profile_menu(self) -> QMenu:
-        menu = QMenu(self)
-        self._profile_actions = {}
-        for key, cfg in self.PROFILE_CONFIGS.items():
-            act = menu.addAction(cfg["label"])
-            act.setCheckable(True)
-            act.setChecked(key == self.current_profile)
-            act.triggered.connect(lambda checked, k=key: self._set_profile(k))
-            self._profile_actions[key] = act
-
-        menu.addSeparator()
-        act_new = menu.addAction("New Profile...")
-        act_new.triggered.connect(self._create_new_profile)
-        return menu
-
-    def _set_profile(self, profile_key: str):
-        self.current_profile = profile_key
-        self.btn_profile.setText(f"Profile: {profile_key} ▾")
-        # Update checkmarks
-        for key, act in self._profile_actions.items():
-            act.setChecked(key == profile_key)
-        self.profileChanged.emit(profile_key)
-
-    def _create_new_profile(self):
-        from PyQt6.QtWidgets import QInputDialog
-        name, ok = QInputDialog.getText(self, "New Profile", "Enter custom display filter expression:")
-        if ok and name.strip():
-            custom_key = f"Custom"
-            self.PROFILE_CONFIGS[custom_key] = {
-                "label": f"Custom ({name.strip()[:30]})",
-                "filter": name.strip(),
-                "description": f"Custom user filter: {name.strip()}",
-            }
-            # Rebuild menu with new entry
-            self.btn_profile.setMenu(self._build_profile_menu())
-            self._set_profile(custom_key)
 
     def set_capture_state(self, state: str):
         """Sets the live engine capture state (IDLE, CAPTURING, FROZEN, PAUSED)."""
@@ -388,11 +303,6 @@ class MainStatusBar(QStatusBar):
         act_time.setChecked(self.panel_time.isVisible())
         act_time.toggled.connect(lambda v: self._toggle_panel("show_time_format", self.panel_time, v))
 
-        act_prof = menu.addAction("Show Active Profile Selector")
-        act_prof.setCheckable(True)
-        act_prof.setChecked(self.panel_profile.isVisible())
-        act_prof.toggled.connect(lambda v: self._toggle_panel("show_profile", self.panel_profile, v))
-
         menu.addSeparator()
         act_reset = menu.addAction("Reset Status Bar Preferences to Default")
         act_reset.triggered.connect(self._reset_preferences)
@@ -409,7 +319,6 @@ class MainStatusBar(QStatusBar):
         self.panel_threats.setVisible(self.settings.value("show_threats", True, type=bool))
         self.panel_buffer.setVisible(self.settings.value("show_buffer", True, type=bool))
         self.panel_time.setVisible(self.settings.value("show_time_format", True, type=bool))
-        self.panel_profile.setVisible(self.settings.value("show_profile", True, type=bool))
 
     def _reset_preferences(self):
         for k, v in self.DEFAULT_PANEL_VISIBILITY.items():
@@ -431,6 +340,8 @@ class MainStatusBar(QStatusBar):
         panel_border = c["border"]
         panel_hover_border = c["brand_primary"]
 
+        btn_hover_bg = "#1D3D47" if ThemeManager.is_dark() else "#E0F2FE"
+
         panel_qss = f"""
             QFrame#statusPanel {{
                 background-color: {panel_bg};
@@ -441,19 +352,31 @@ class MainStatusBar(QStatusBar):
             }}
             QFrame#statusPanel:hover {{
                 border-color: {panel_hover_border};
+                background-color: {c['bg_alt']};
             }}
         """
-        for p in (self.panel_throughput, self.panel_events, self.panel_threats, self.panel_buffer, self.panel_time, self.panel_profile):
+        for p in (self.panel_throughput, self.panel_events, self.panel_threats, self.panel_buffer, self.panel_time):
             p.setStyleSheet(panel_qss)
 
-        self.btn_events.setStyleSheet(f"color: {c['fg_text']}; padding: 0 4px; background: transparent; border: none;")
+        self.btn_events.setStyleSheet(f"""
+            QPushButton {{ color: {c['fg_text']}; padding: 1px 5px; background: transparent; border: none; border-radius: 2px; }}
+            QPushButton:hover {{ background-color: {btn_hover_bg}; color: #FFFFFF; }}
+        """)
         self.lbl_eps.setStyleSheet(f"color: {c['brand_primary']}; font-weight: bold;")
         self.lbl_buffer.setStyleSheet(f"color: {c['fg_muted']};")
-        self.btn_time.setStyleSheet(f"color: {c['fg_text']}; padding: 0 4px; background: transparent; border: none;")
-        self.btn_profile.setStyleSheet(f"color: {c['brand_primary']}; padding: 0 4px; font-weight: bold; background: transparent; border: none;")
+        self.btn_time.setStyleSheet(f"""
+            QPushButton {{ color: {c['fg_text']}; padding: 1px 5px; background: transparent; border: none; border-radius: 2px; }}
+            QPushButton:hover {{ background-color: {btn_hover_bg}; color: #FFFFFF; }}
+        """)
         if self.threat_count > 0:
-            self.btn_threats.setStyleSheet("color: #FFFFFF; background-color: #C0392B; border-radius: 2px; padding: 1px 6px; font-weight: bold;")
+            self.btn_threats.setStyleSheet("""
+                QPushButton { color: #FFFFFF; background-color: #C0392B; border-radius: 2px; padding: 1px 6px; font-weight: bold; }
+                QPushButton:hover { background-color: #E74C3C; border: 1px solid #FF7675; }
+            """)
         else:
-            self.btn_threats.setStyleSheet(f"color: {c['accent_success']}; padding: 0 4px; font-weight: bold; background: transparent; border: none;")
+            self.btn_threats.setStyleSheet(f"""
+                QPushButton {{ color: {c['accent_success']}; padding: 1px 5px; font-weight: bold; background: transparent; border: none; border-radius: 2px; }}
+                QPushButton:hover {{ background-color: {btn_hover_bg}; color: #FFFFFF; }}
+            """)
         self.set_capture_state(self.capture_state)
         self.set_status_message(self.lbl_message.text())

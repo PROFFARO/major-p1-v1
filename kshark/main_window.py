@@ -5,7 +5,8 @@ Integrated with real Linux OS telemetry, kernel eBPF probes, Dual ML Threat Engi
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QStackedWidget,
-    QTableView, QTreeView, QHeaderView, QFileDialog, QMessageBox, QMenu, QToolBar
+    QTableView, QTreeView, QHeaderView, QFileDialog, QMessageBox, QMenu, QToolBar,
+    QApplication, QLineEdit, QTextEdit, QPlainTextEdit, QTextBrowser
 )
 from PyQt6.QtGui import QAction, QKeySequence, QIcon, QBrush, QColor
 from PyQt6.QtCore import Qt, QModelIndex, QByteArray, QTimer, QSettings
@@ -17,6 +18,7 @@ import time
 
 from kshark.core.theme import ThemeManager, get_monospace_font
 from kshark.core.settings import KSharkSettings
+from kshark.core.clipboard_utils import ClipboardUtils, UniversalClipboardEventFilter
 from kshark.core.backend_bridge import BackendBridge
 from kshark.models.event_table_model import EventTableModel
 from kshark.models.event_proxy_model import EventFilterProxyModel
@@ -32,9 +34,8 @@ from kshark.widgets.scroll_views import KSharkTableView, KSharkTreeView, KSharkT
 
 from kshark.widgets.search_frame import KSharkSearchFrame
 from kshark.widgets.accordion_frame import GoToFrame
-from kshark.widgets.edge_dock_bar import BottomEdgeRestoreBar, RightEdgeRestoreBar
+from kshark.widgets.edge_dock_bar import BottomEdgeRestoreBar
 from kshark.widgets.custom_dock_title_bar import KSharkDockTitleBar
-from kshark.docks.copilot_dock import CopilotDock
 from kshark.docks.threat_timeline_dock import ThreatTimelineDock
 from kshark.dialogs.preferences_dialog import PreferencesDialog
 
@@ -88,6 +89,12 @@ class KSharkMainWindow(QMainWindow):
         self._restore_state()
         self.apply_font_size(self._zoom_level)
 
+        # Universal Clipboard & Shortcut Event Filter
+        self._clipboard_filter = UniversalClipboardEventFilter(self)
+        app = QApplication.instance()
+        if app:
+            app.installEventFilter(self._clipboard_filter)
+
 
     def _init_models(self):
         self.table_model = EventTableModel(self)
@@ -137,10 +144,6 @@ class KSharkMainWindow(QMainWindow):
         self.central_layout.addWidget(self.master_stack, stretch=1)
 
         shell_layout.addWidget(main_content_widget, stretch=1)
-
-        # Right Edge Restore Bar
-        self.right_restore_bar = RightEdgeRestoreBar(self.central_widget)
-        shell_layout.addWidget(self.right_restore_bar)
 
         # View 0: Welcome Page
         self.welcome_page = WelcomePage(self)
@@ -255,8 +258,17 @@ class KSharkMainWindow(QMainWindow):
 
         # ── 2. Edit Menu ──
         m_edit = menubar.addMenu("&Edit")
-        m_copy = m_edit.addMenu("&Copy")
-        add_act(m_copy, "Summary (CSV)", self._copy_selected_csv, "Ctrl+C")
+        add_act(m_edit, "&Undo", self._action_undo, "Ctrl+Z")
+        add_act(m_edit, "&Redo", self._action_redo, "Ctrl+Y")
+        m_edit.addSeparator()
+        add_act(m_edit, "Cu&t", self._action_cut, "Ctrl+X")
+        add_act(m_edit, "&Copy", self._action_copy, "Ctrl+C")
+        add_act(m_edit, "&Paste", self._action_paste, "Ctrl+V")
+        add_act(m_edit, "Select &All", self._action_select_all, "Ctrl+A")
+        m_edit.addSeparator()
+
+        m_copy = m_edit.addMenu("Copy Dissected &Event")
+        add_act(m_copy, "Summary (CSV)", self._copy_selected_csv, "Ctrl+Alt+C")
         add_act(m_copy, "As JSON Object", self._copy_selected_json, "Ctrl+Shift+C")
         add_act(m_copy, "Process Name", self._copy_selected_proc)
         add_act(m_copy, "Process PID", self._copy_selected_pid)
@@ -287,7 +299,6 @@ class KSharkMainWindow(QMainWindow):
         # Docks & Panes Submenu with Accelerators
         m_docks = m_view.addMenu("Panels & Forensic Docks")
         act_timeline = add_act(m_docks, "Threat Timeline & Incident Triage", self.toggle_threat_timeline, "Alt+1")
-        act_copilot = add_act(m_docks, "AI Security Copilot Dock", self.toggle_copilot, "Alt+2")
         m_docks.addSeparator()
         add_act(m_docks, "Dissection & Intelligence Pane", self.toggle_dissection_pane, "Alt+3")
         add_act(m_docks, "Hex & Byte Inspector Pane", self.toggle_byte_view_pane, "Alt+4")
@@ -423,7 +434,6 @@ class KSharkMainWindow(QMainWindow):
         # ── 8. Tools Menu ──
         m_tools = menubar.addMenu("&Tools")
         add_act(m_tools, "Multi-Attack Benchmark Simulator...", self._action_open_attack_simulator, "Ctrl+Alt+M")
-        add_act(m_tools, "AI Copilot Provider Settings...", self._action_open_copilot_settings, "Ctrl+Alt+O")
 
         # ── 9. Help Menu ──
         m_help = menubar.addMenu("&Help")
@@ -435,12 +445,6 @@ class KSharkMainWindow(QMainWindow):
         add_act(m_help, "&About KShark", self._action_open_about, "Shift+F1")
 
     def _init_docks(self):
-        self.dock_copilot = CopilotDock(self)
-        self.dock_copilot_title = KSharkDockTitleBar(self.dock_copilot, "AI Security Copilot", self)
-        self.dock_copilot.setTitleBarWidget(self.dock_copilot_title)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.dock_copilot)
-        self.dock_copilot.hide()
-
         self.dock_timeline = ThreatTimelineDock(self)
         self.dock_timeline_title = KSharkDockTitleBar(self.dock_timeline, "Threat Timeline & Incident Triage", self)
         self.dock_timeline.setTitleBarWidget(self.dock_timeline_title)
@@ -454,7 +458,6 @@ class KSharkMainWindow(QMainWindow):
         self.bridge.eventReceived.connect(self._handle_live_event)
         self.bridge.threatDetected.connect(self._handle_threat_detected)
         self.bridge.statsUpdated.connect(self._handle_stats_updated)
-        self.bridge.copilotResponseReceived.connect(self.dock_copilot.append_copilot_response)
         self.dock_timeline.threatMarkerSelected.connect(self._on_timeline_marker_selected)
         self.dock_timeline.filterMainViewRequested.connect(self._on_filter_applied)
 
@@ -519,36 +522,25 @@ class KSharkMainWindow(QMainWindow):
 
         # Status Bar Signals
         self.status_bar.timeFormatChanged.connect(self._set_time_format)
-        self.status_bar.profileChanged.connect(self._on_profile_changed)
         self.status_bar.threatsClicked.connect(self._on_status_bar_threats_clicked)
         self.status_bar.eventsClicked.connect(self._action_open_threat_summary)
         # Edge Restore Bar connections
         self.bottom_restore_bar.toggleTimelineRequested.connect(self.toggle_threat_timeline)
         self.bottom_restore_bar.toggleDissectionRequested.connect(self.toggle_dissection_pane)
         self.bottom_restore_bar.toggleByteViewRequested.connect(self.toggle_byte_view_pane)
-        self.right_restore_bar.toggleCopilotRequested.connect(self.toggle_copilot)
 
         # Dock visibility sync to edge buttons
         self.dock_timeline.visibilityChanged.connect(self.bottom_restore_bar.btn_timeline.set_component_active)
-        self.dock_copilot.visibilityChanged.connect(self.right_restore_bar.set_copilot_active)
 
         # Pane corner minimize buttons
         self.detail_pane.minimizeRequested.connect(self.toggle_dissection_pane)
         self.byte_view.minimizeRequested.connect(self.toggle_byte_view_pane)
-
-        self.dock_copilot.copilotQuerySubmitted.connect(self.bridge.query_copilot)
 
     def toggle_threat_timeline(self):
         """Toggles Threat Timeline Dock and updates bottom edge restore button."""
         vis = not self.dock_timeline.isVisible()
         self.dock_timeline.setVisible(vis)
         self.bottom_restore_bar.btn_timeline.set_component_active(vis)
-
-    def toggle_copilot(self):
-        """Toggles AI Copilot Dock and updates right edge restore button."""
-        vis = not self.dock_copilot.isVisible()
-        self.dock_copilot.setVisible(vis)
-        self.right_restore_bar.set_copilot_active(vis)
 
     def toggle_dissection_pane(self):
         """Toggles Dissection & Intelligence Pane and updates bottom restore button."""
@@ -632,10 +624,6 @@ class KSharkMainWindow(QMainWindow):
         else:
             self.status_bar.set_status_message("Threat Timeline & Incident Triage opened. No active security threats detected.")
 
-
-    def _on_profile_changed(self, profile: str):
-        """Switches active capture & filtering profile."""
-        self.status_bar.set_status_message(f"Switched to Profile: {profile}")
 
     def _on_launch_scenario(self, name: str, filter_expr: str):
         """Launches a specialized threat hunting or triage scenario."""
@@ -852,28 +840,6 @@ class KSharkMainWindow(QMainWindow):
                 self.status_bar.set_status_message(f"Filter matched {matched:,} of {total:,} events ({elapsed_ms:.1f} ms)")
 
 
-    def _on_profile_changed(self, profile_key: str):
-        """Apply the selected capture/analysis profile — sets display filter and updates status."""
-        from kshark.widgets.main_status_bar import MainStatusBar
-
-        cfg = MainStatusBar.PROFILE_CONFIGS.get(profile_key)
-        if not cfg:
-            return
-
-        filter_expr = cfg.get("filter", "")
-        description = cfg.get("description", "")
-
-        # Apply or clear the display filter
-        if filter_expr:
-            self.filter_bar.set_filter_text(filter_expr, apply_immediately=True)
-        else:
-            # Default profile — clear any active filter
-            self.filter_bar.set_filter_text("", apply_immediately=False)
-            self._on_filter_cleared()
-
-        self.status_bar.set_status_message(f"Profile: {profile_key} — {description}")
-
-
     def _on_event_row_selected(self, selected, deselected):
         indexes = self.event_list_view.selectionModel().selectedRows()
         if not indexes:
@@ -884,8 +850,6 @@ class KSharkMainWindow(QMainWindow):
 
         self.detail_pane.set_event(event)
         self.byte_view.set_event_data(event)
-        if event and hasattr(self, "dock_copilot"):
-            self.dock_copilot.update_selected_event_context(event)
 
     def _on_tree_field_selected(self, current: QModelIndex, previous: QModelIndex):
         if not current.isValid():
@@ -1577,13 +1541,75 @@ class KSharkMainWindow(QMainWindow):
             return self.proxy_model.get_event_at_proxy_row(indexes[0].row())
         return None
 
+    def _action_undo(self):
+        focus = QApplication.focusWidget()
+        if isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit)):
+            focus.undo()
+
+    def _action_redo(self):
+        focus = QApplication.focusWidget()
+        if isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit)):
+            focus.redo()
+
+    def _action_cut(self):
+        focus = QApplication.focusWidget()
+        if isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit)) and not focus.isReadOnly():
+            if isinstance(focus, QLineEdit) and focus.echoMode() == QLineEdit.EchoMode.Password:
+                sel = focus.selectedText() or focus.text()
+                if sel:
+                    ClipboardUtils.set_text(sel)
+                    focus.clear() if not focus.selectedText() else focus.del_()
+                    return
+            focus.cut()
+
+    def _action_copy(self):
+        focus = QApplication.focusWidget()
+        if isinstance(focus, (QLineEdit, QTextEdit, QPlainTextEdit, QTextBrowser)):
+            if isinstance(focus, QLineEdit) and focus.echoMode() == QLineEdit.EchoMode.Password:
+                sel = focus.selectedText() or focus.text()
+                if sel:
+                    ClipboardUtils.set_text(sel)
+                    return
+            if isinstance(focus, (QTextEdit, QTextBrowser)):
+                cursor = focus.textCursor()
+                if cursor.hasSelection():
+                    sel = cursor.selectedText().replace("\u2029", "\n")
+                    ClipboardUtils.set_text(sel)
+                    return
+            focus.copy()
+            return
+        # If event list table has selection or focus, copy event summary
+        self._copy_selected_csv()
+
+    def _action_paste(self):
+        focus = QApplication.focusWidget()
+        txt = ClipboardUtils.get_text()
+        if isinstance(focus, QLineEdit) and not focus.isReadOnly():
+            if txt:
+                clean = txt.strip().strip("'\"") if focus.echoMode() == QLineEdit.EchoMode.Password else txt.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+                focus.insert(clean)
+            else:
+                focus.paste()
+        elif isinstance(focus, (QTextEdit, QPlainTextEdit)) and not focus.isReadOnly():
+            if txt:
+                focus.insertPlainText(txt)
+            else:
+                focus.paste()
+
+    def _action_select_all(self):
+        focus = QApplication.focusWidget()
+        if hasattr(focus, "selectAll"):
+            focus.selectAll()
+        elif self.event_list_view.hasFocus():
+            self.event_list_view.selectAll()
+
     def _copy_selected_csv(self):
         indexes = self.event_list_view.selectionModel().selectedRows()
         if not indexes:
             return
         row = indexes[0].row()
         texts = [str(self.proxy_model.data(self.proxy_model.index(row, c), Qt.ItemDataRole.DisplayRole) or "") for c in range(len(EventTableModel.COLUMNS))]
-        QApplication.clipboard().setText(",".join(texts))
+        ClipboardUtils.set_text(",".join(texts))
 
     def _copy_selected_json(self):
         ev = self._get_current_selected_event()
@@ -1769,12 +1795,6 @@ class KSharkMainWindow(QMainWindow):
 
     def _action_open_attack_simulator(self):
         QMessageBox.information(self, "Attack Simulator", "Multi-Attack Benchmark Simulator is available in scripts/:\n\nExecute safely in terminal:\npython3 scripts/multi_attack_simulator.py\n\nSimulates Ransomware, Reverse Shell C2, Shadow Credential Dump, and Port Scan Probes.")
-
-    def _action_open_copilot_settings(self):
-
-        self.dock_copilot.show()
-        self.dock_copilot.raise_()
-        self.dock_copilot.input_field.setFocus()
 
     def _action_open_manual(self):
         QMessageBox.information(self, "KShark Documentation", "KShark Architecture & Operations Manual:\n\n• 3-Pane Dissection Model (Event Table, 5-Layer Tree, 5-Tab Hex Inspector)\n• Real-Time Display Filter Syntax: proc.name, evt.type, user.uid, threat.name\n• Dual-Model ML Consensus Engine (Random Forest + XGBoost + Isolation Forest)")

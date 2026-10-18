@@ -87,17 +87,6 @@ class ActiveBlockRecord(BaseModel):
     details: str = ""
 
 
-class LLMChatRecord(BaseModel):
-    """Analyst LLM Copilot chat message record for SQLite WAL database."""
-    id: Optional[int] = None
-    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    sender: str  # "user" or "copilot"
-    prompt: str
-    response: str
-    provider: str = "auto"
-    model_name: str = ""
-
-
 # ─────────────────────────────────────────────────────────────
 # REST API Request / Response DTOs
 # ─────────────────────────────────────────────────────────────
@@ -118,7 +107,6 @@ class MetricsSummaryResponse(BaseModel):
     total_threats_detected: int = 0
     threats_by_class: Dict[str, int] = Field(default_factory=dict)
     active_kernel_blocks: int = 0
-    copilot_status: str = "ONLINE"
 
 
 class AlertsQueryRequest(BaseModel):
@@ -131,20 +119,6 @@ class AlertsQueryRequest(BaseModel):
 class UnblockRequest(BaseModel):
     pid: int
     reason: str = "Analyst manual unblock"
-
-
-class CopilotChatRequest(BaseModel):
-    prompt: str
-    pid: Optional[int] = None
-    include_history: bool = True
-
-
-class CopilotChatResponse(BaseModel):
-    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    prompt: str
-    response: str
-    provider: str
-    model_name: str
 
 
 class DuckDBSQLQueryRequest(BaseModel):

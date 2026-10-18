@@ -29,7 +29,9 @@ if ENV_FILE.exists():
                     k, v = line.split("=", 1)
                     k = k.strip()
                     v = v.strip().strip("'\"")
-                    if k and k not in os.environ:
+                    if v.startswith("${") and v.endswith("}"):
+                        v = ""
+                    if k and k not in os.environ and v:
                         os.environ[k] = v
     except Exception:
         pass
@@ -230,26 +232,6 @@ BEHAVIORAL_RULES_ENABLED = bool(YAML_CONFIG_DATA.get("detection", {}).get("behav
 
 # Audit log file path
 AUDIT_LOG_PATH = LOGS_DIR / "audit_log.jsonl"
-
-# ─────────────────────────────────────────────────────────────
-# Universal LLM Security Analyst Configuration
-# ─────────────────────────────────────────────────────────────
-
-LLM_API_KEY = (
-    os.getenv("LLM_API_KEY")
-    or os.getenv("GEMINI_API_KEY")
-    or os.getenv("OPENAI_API_KEY")
-    or os.getenv("GROQ_API_KEY")
-    or os.getenv("DEEPSEEK_API_KEY")
-    or ""
-)
-LLM_BASE_URL = os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL") or YAML_CONFIG_DATA.get("copilot", {}).get("base_url") or ""
-LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME") or YAML_CONFIG_DATA.get("copilot", {}).get("model_name") or "gemini-2.5-flash"
-LLM_PROVIDER = (os.getenv("LLM_PROVIDER") or YAML_CONFIG_DATA.get("copilot", {}).get("provider") or "auto").lower()
-
-# Maximum telemetry events injected into LLM context per query
-LLM_MAX_CONTEXT_EVENTS = int(os.getenv("LLM_MAX_CONTEXT_EVENTS") or YAML_CONFIG_DATA.get("copilot", {}).get("max_context_events", 200))
-LLM_MAX_OUTPUT_LENGTH = int(os.getenv("LLM_MAX_OUTPUT_LENGTH") or YAML_CONFIG_DATA.get("copilot", {}).get("max_output_length", 800))
 
 # ML Engine REST API & Storage
 REST_API_HOST = os.getenv("REST_API_HOST") or YAML_CONFIG_DATA.get("api", {}).get("host") or "0.0.0.0"

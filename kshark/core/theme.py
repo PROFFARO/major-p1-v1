@@ -34,6 +34,11 @@ class ThemeManager(QObject):
     def instance(cls) -> 'ThemeManager':
         if cls._instance is None:
             cls._instance = ThemeManager()
+        else:
+            try:
+                cls._instance.objectName()
+            except RuntimeError:
+                cls._instance = ThemeManager()
         return cls._instance
 
     @classmethod

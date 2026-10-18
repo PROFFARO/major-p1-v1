@@ -15,7 +15,6 @@ from ml_engine.storage import DatabaseManager
 from ml_engine.models.detector import ThreatDetector
 from ml_engine.rules.behavioral_engine import BehavioralEngine
 from ml_engine.inference.realtime_engine import RealtimeIngestionEngine
-from ml_engine.llm_analyst.copilot import LLMSecurityCopilot
 from kshark.core.os_collector import LiveOSTelemetryCollector
 
 logger = logging.getLogger("kshark.bridge")
@@ -30,7 +29,6 @@ class BackendBridge(QObject):
     threatDetected = pyqtSignal(dict)
     statsUpdated = pyqtSignal(dict)
     connectionStateChanged = pyqtSignal(bool)
-    copilotResponseReceived = pyqtSignal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -40,7 +38,6 @@ class BackendBridge(QObject):
         self.db_mgr: Optional[DatabaseManager] = None
         self.detector: Optional[ThreatDetector] = None
         self.behavioral_engine: Optional[BehavioralEngine] = None
-        self.copilot: Optional[LLMSecurityCopilot] = None
         self.engine: Optional[RealtimeIngestionEngine] = None
         self.os_collector: Optional[LiveOSTelemetryCollector] = None
 
@@ -58,7 +55,6 @@ class BackendBridge(QObject):
             self.db_mgr = DatabaseManager()
             self.detector = ThreatDetector()
             self.behavioral_engine = BehavioralEngine()
-            self.copilot = LLMSecurityCopilot()
 
             self.engine = RealtimeIngestionEngine(
                 ws_url=self.ws_url,
@@ -272,20 +268,6 @@ class BackendBridge(QObject):
 
         threading.Thread(target=_do_stop, daemon=True, name="bridge-stop-worker").start()
         self.connectionStateChanged.emit(False)
-
-    def query_copilot(self, prompt: str):
-        """Dispatches LLM Analyst Copilot query in background thread."""
-        def _run_query():
-            try:
-                if self.copilot:
-                    resp = self.copilot.analyze_query(prompt)
-                else:
-                    resp = f"LLM Copilot response for: '{prompt}'\nAnalyzing active Linux OS telemetry events."
-                self.copilotResponseReceived.emit(prompt, resp)
-            except Exception as e:
-                self.copilotResponseReceived.emit(prompt, f"Copilot error: {e}")
-
-        threading.Thread(target=_run_query, daemon=True).start()
 
     def _stats_loop(self):
         """Emits stats every 1 second while capturing."""

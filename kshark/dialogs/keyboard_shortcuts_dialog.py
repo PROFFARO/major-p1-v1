@@ -27,6 +27,15 @@ SHORTCUTS_DATA = [
     ("Capture & Session", "Close Session", "Ctrl+W", "Global"),
     ("Capture & Session", "Exit KShark Application", "Ctrl+Q", "Global"),
 
+    ("Edit & Clipboard", "Copy Text or Selected Event", "Ctrl+C", "Global"),
+    ("Edit & Clipboard", "Paste from Clipboard", "Ctrl+V", "Global"),
+    ("Edit & Clipboard", "Cut Text to Clipboard", "Ctrl+X", "Global"),
+    ("Edit & Clipboard", "Select All", "Ctrl+A", "Global"),
+    ("Edit & Clipboard", "Undo", "Ctrl+Z", "Global"),
+    ("Edit & Clipboard", "Redo", "Ctrl+Y", "Global"),
+    ("Edit & Clipboard", "Copy Selected Event as CSV", "Ctrl+Alt+C", "Main View"),
+    ("Edit & Clipboard", "Copy Selected Event as JSON", "Ctrl+Shift+C", "Main View"),
+
     ("Navigation & Search", "Find Event / Text in Buffer", "Ctrl+F", "Main View"),
     ("Navigation & Search", "Go to Event Number (PID/Row)", "Ctrl+G", "Main View"),
     ("Navigation & Search", "Next Event", "Ctrl+Down  or  J", "Main View"),
@@ -40,7 +49,6 @@ SHORTCUTS_DATA = [
     ("Navigation & Search", "Clear All Events Buffer", "Ctrl+Shift+X", "Main View"),
 
     ("Panels & Forensic Docks", "Toggle Threat Timeline Dock", "Alt+1", "Global"),
-    ("Panels & Forensic Docks", "Toggle AI Security Copilot Dock", "Alt+2", "Global"),
     ("Panels & Forensic Docks", "Toggle Dissection Intelligence Pane", "Alt+3", "Global"),
     ("Panels & Forensic Docks", "Toggle Hex & Byte Inspector Pane", "Alt+4", "Global"),
     ("Panels & Forensic Docks", "Minimize / Restore Active Dock Panel", "Esc  or  Ctrl+M", "Dock"),
@@ -66,11 +74,7 @@ SHORTCUTS_DATA = [
     ("Statistical Analytics", "DuckDB Embedded SQL Query Console", "Ctrl+Shift+Q", "Global"),
     ("Statistical Analytics", "Security Incident Executive Summary", "Ctrl+Shift+I", "Global"),
 
-    ("AI Copilot & Tools", "Trigger Deep Forensic Event Analysis", "Ctrl+Shift+A", "Copilot"),
-    ("AI Copilot & Tools", "Reconstruct MITRE Execution Chain", "Ctrl+Shift+E", "Copilot"),
-    ("AI Copilot & Tools", "Generate Containment Playbook", "Ctrl+Shift+P", "Copilot"),
-    ("AI Copilot & Tools", "Multi-Attack Benchmark Simulator", "Ctrl+Alt+M", "Global"),
-    ("AI Copilot & Tools", "AI Copilot Provider Configuration", "Ctrl+Alt+O", "Global"),
+    ("Tools & Benchmarks", "Multi-Attack Benchmark Simulator", "Ctrl+Alt+M", "Global"),
 
     ("Help & Reference", "Keyboard Shortcuts Reference Table", "F1", "Global"),
     ("Help & Reference", "KShark Architecture & User Manual", "F2", "Global"),

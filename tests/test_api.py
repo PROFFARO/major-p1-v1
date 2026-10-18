@@ -12,8 +12,6 @@ from fastapi.testclient import TestClient
 from ml_engine.api.server import app
 from ml_engine.api.routes import set_api_dependencies
 from ml_engine.storage import DatabaseManager, ThreatAlertRecord, ActiveBlockRecord
-from ml_engine.llm_analyst.copilot import LLMSecurityCopilot
-
 
 import tempfile
 import shutil
@@ -27,8 +25,7 @@ class TestFastAPIRoutes(unittest.TestCase):
         cls.duckdb_path = Path(cls.temp_dir) / "test_telemetry.db"
         cls.sqlite_path = Path(cls.temp_dir) / "test_sec_audit.db"
         cls.db_mgr = DatabaseManager(duckdb_path=cls.duckdb_path, sqlite_path=cls.sqlite_path)
-        cls.copilot = LLMSecurityCopilot(api_key="", base_url="")
-        set_api_dependencies(db_mgr=cls.db_mgr, copilot=cls.copilot)
+        set_api_dependencies(db_mgr=cls.db_mgr)
         cls.client = TestClient(app)
 
     @classmethod
@@ -50,7 +47,6 @@ class TestFastAPIRoutes(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertIn("total_events_ingested", data)
-        self.assertIn("copilot_status", data)
 
     def test_alerts_endpoint(self):
         """Test GET /api/v1/alerts."""
@@ -74,19 +70,6 @@ class TestFastAPIRoutes(unittest.TestCase):
         data = response.json()
         self.assertIn("alerts", data)
         self.assertGreater(data["count"], 0)
-
-
-
-    def test_copilot_chat_endpoint(self):
-        """Test POST /api/v1/copilot/chat."""
-        response = self.client.post(
-            "/api/v1/copilot/chat",
-            json={"prompt": "What security mitigations are active?"},
-        )
-        self.assertEqual(response.status_code, 200)
-        data = response.json()
-        self.assertIn("response", data)
-        self.assertIn("provider", data)
 
     def test_duckdb_telemetry_query_endpoint(self):
         """Test POST /api/v1/telemetry/query (DuckDB SQL analytics)."""

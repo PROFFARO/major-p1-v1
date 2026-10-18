@@ -348,3 +348,7 @@ class KSharkIcons:
             <line x1="5" y1="8" x2="11" y2="8" stroke="#0E9AA7" stroke-width="1.5"/>
         </svg>"""
         return cls._render_svg(svg, 16)
+
+
+
+

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
 Single Centralized System Orchestrator & Interactive Command Center
-eBPF-ML Security System & LLM Copilot Analyst Platform.
+eBPF-ML Security System Observability Platform.
 
 Orchestrates the Go eBPF kernel agent subprocess, Python ML real-time ingestion,
-DuckDB columnar storage, SQLite WAL audit logging, FastAPI REST server, and interactive
-Analyst Copilot CLI in a single unified process lifecycle.
+DuckDB columnar storage, SQLite WAL audit logging, and FastAPI REST server in a single unified process lifecycle.
 
 Usage:
   sudo python3 main.py
@@ -42,10 +41,6 @@ from ml_engine.config import (
     AGENT_REST_BASE,
     REST_API_PORT,
     REST_API_HOST,
-    LLM_API_KEY,
-    LLM_BASE_URL,
-    LLM_MODEL_NAME,
-    LLM_PROVIDER,
     LOGS_DIR,
     DATASET_DIR,
 )
@@ -53,7 +48,6 @@ from ml_engine.models.detector import ThreatDetector
 from ml_engine.rules.behavioral_engine import BehavioralEngine
 from ml_engine.detection.alert_dispatcher import AlertDispatcher
 from ml_engine.inference.realtime_engine import RealtimeIngestionEngine
-from ml_engine.llm_analyst.copilot import LLMSecurityCopilot
 from ml_engine.storage import DatabaseManager
 from ml_engine.api import APIServerRunner
 
@@ -67,7 +61,7 @@ class UnifiedSystemOrchestrator:
       2. Python Streaming ML Inference Engine & Falco Behavioral Rules
       3. DuckDB Columnar & SQLite WAL Database Managers
       4. FastAPI REST Server & Dashboard API
-      5. Interactive Analyst Copilot CLI Console
+      5. Interactive Telemetry CLI Console
     """
 
     def __init__(
@@ -114,15 +108,7 @@ class UnifiedSystemOrchestrator:
 
         self.behavioral_engine = BehavioralEngine()
 
-        # 3. Universal LLM Security Analyst Copilot
-        self.copilot = LLMSecurityCopilot(
-            api_key=LLM_API_KEY,
-            base_url=LLM_BASE_URL,
-            model_name=LLM_MODEL_NAME,
-            provider=LLM_PROVIDER,
-        )
-
-        # 4. Realtime Ingestion Engine
+        # 3. Realtime Ingestion Engine
         ws_url = f"ws://localhost{agent_listen if agent_listen.startswith(':') else ':' + agent_listen}/ws"
         self.engine = RealtimeIngestionEngine(
             ws_url=ws_url,
@@ -133,14 +119,13 @@ class UnifiedSystemOrchestrator:
             db_manager=self.db_mgr,
         )
 
-        # 5. FastAPI REST Server Runner
+        # 4. FastAPI REST Server Runner
         self.api_server = None
         if not self.no_api:
             self.api_server = APIServerRunner(
                 host=REST_API_HOST,
                 port=self.api_port,
                 db_mgr=self.db_mgr,
-                copilot=self.copilot,
                 engine=self.engine,
             )
 
@@ -161,35 +146,22 @@ class UnifiedSystemOrchestrator:
             float(alert.get("confidence", 1.0)) * 100.0,
         )
 
-        metadata = {
-            "pid": pid,
-            "comm": alert.get("comm", "unknown"),
-            "exe_path": alert.get("exe_path", "/tmp/unknown"),
-            "parent_comm": alert.get("parent_comm", "bash"),
-            "dst_ip": alert.get("dst_ip", "0.0.0.0"),
-        }
-
-        report = self.copilot.analyze_threat(alert, metadata)
-        remediation = self.copilot.generate_remediation(alert, metadata)
-
         report_entry = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "pid": pid,
             "threat_name": threat_name,
+            "comm": alert.get("comm", "unknown"),
+            "exe_path": alert.get("exe_path", "/tmp/unknown"),
             "action_taken": source,
-            "soc_report": report,
-            "remediation_guide": remediation,
+            "confidence": float(alert.get("confidence", 1.0)),
         }
         self.latest_reports.insert(0, report_entry)
         if len(self.latest_reports) > 50:
             self.latest_reports.pop()
 
         print("\n" + "─" * 80)
-        print(f"INCIDENT REPORT [PID {pid}] Classification: {threat_name}")
-        print("─" * 80)
-        print(report)
-        print("\nREMEDIATION RUNBOOK:")
-        print(remediation)
+        print(f"INCIDENT REPORT [PID {pid}] Classification: {threat_name} | Source: {source}")
+        print(f"Process: {report_entry['comm']} ({report_entry['exe_path']}) | Confidence: {report_entry['confidence'] * 100:.1f}%")
         print("─" * 80 + "\n")
 
     def _start_go_agent(self):
@@ -321,7 +293,6 @@ class UnifiedSystemOrchestrator:
         """Interactive Enterprise Command Center for Security Operations."""
         agent_status = "ONLINE" if (self.agent_process and self.agent_process.poll() is None) else ("DISABLED" if self.no_agent else "OFFLINE")
         models_status = "LOADED (RandomForest + XGBoost)" if self.detector.loaded else "FALLBACK (Falco Rules Only)"
-        copilot_status = "ONLINE" if self.copilot.is_available() else "OFFLINE"
 
         print("\n" + "┌" + "─" * 78 + "┐")
         print("│            eBPF SECURITY OBSERVABILITY & THREAT ENGINE (v1.0.0)             │")
@@ -329,10 +300,9 @@ class UnifiedSystemOrchestrator:
         print(f"│ Operating Mode     : Non-Intrusive Telemetry Observability & Audit            │")
         print(f"│ Go eBPF Agent      : {agent_status:<10} ({self.agent_listen:<20})                  │")
         print(f"│ Detection Engine   : {models_status:<55} │")
-        print(f"│ Analyst Copilot    : {copilot_status:<10} ({self.copilot.provider.upper()}: {self.copilot.model_name:<20})            │")
         print(f"│ REST API Gateway   : {'ONLINE' if self.api_server else 'DISABLED':<10} (http://localhost:{self.api_port:<5})                   │")
         print("└" + "─" * 78 + "┘")
-        print(" Available commands: status, alerts, subsystems, audit, query <SQL>, chat <prompt>, reports, help, exit")
+        print(" Available commands: status, alerts, subsystems, audit, query <SQL>, reports, help, exit")
         print("─" * 80 + "\n")
 
         while self.running:
@@ -542,25 +512,6 @@ class UnifiedSystemOrchestrator:
                     except Exception as err:
                         print(f"Export execution error: {err}\n")
 
-                elif base_cmd in ("chat", "copilot", "analyze"):
-                    prompt = cmd[len(base_cmd):].strip()
-                    if not prompt:
-                        print("Usage: chat <prompt> (e.g. chat Analyze recent ransomware activity)\n")
-                        continue
-                    print("\nProcessing context query via LLM Analyst Copilot...\n")
-                    history = self.db_mgr.sqlite.get_mitigation_audit_logs(limit=20)
-                    answer = self.copilot.chat(user_query=prompt, audit_history=history)
-
-                    try:
-                        from rich.console import Console
-                        from rich.markdown import Markdown
-                        from rich.panel import Panel
-                        from rich import box
-                        console = Console()
-                        console.print(Panel(Markdown(answer), title="SECURITY ANALYST COPILOT RESPONSE", border_style="bold cyan", box=box.ROUNDED))
-                    except ImportError:
-                        print(answer + "\n")
-
                 elif base_cmd in ("reports", "incidents"):
                     print(f"\nSOC Incident Reports ({len(self.latest_reports)} available):")
                     if not self.latest_reports:
@@ -572,8 +523,8 @@ class UnifiedSystemOrchestrator:
                             from rich.markdown import Markdown
                             from rich import box
                             console = Console()
-                            for r in self.latest_reports[:3]:
-                                content = f"**PID**: {r['pid']} | **Classification**: {r['threat_name']} | **Action**: {r['action_taken']}\n\n" + r['soc_report']
+                            for r in self.latest_reports[:5]:
+                                content = f"**PID**: {r['pid']} | **Classification**: {r['threat_name']} | **Action**: {r['action_taken']} | **Process**: {r.get('comm')} ({r.get('exe_path')})"
                                 console.print(Panel(Markdown(content), title=f"INCIDENT REPORT - {r['timestamp']}", border_style="bold red", box=box.ROUNDED))
                         except ImportError:
                             for r in self.latest_reports[:5]:
@@ -596,7 +547,6 @@ class UnifiedSystemOrchestrator:
                         table.add_row("subsystems", "wrappers", "Display operational matrix for all 13 eBPF project wrappers")
                         table.add_row("audit [N]", "log", "Display telemetry decision and enforcement audit records")
                         table.add_row("query <SQL>", "sql", "Execute analytical SQL queries directly on DuckDB columnar engine")
-                        table.add_row("chat <prompt>", "copilot, analyze", "Submit context queries to Universal LLM Analyst Copilot")
                         table.add_row("reports", "incidents", "View structured SOC incident reports generated during session")
                         table.add_row("exit", "quit, q", "Terminate background services and exit command shell")
 
@@ -608,7 +558,6 @@ class UnifiedSystemOrchestrator:
                         print("  subsystems, wrappers   - Display status for all 13 eBPF wrappers")
                         print("  audit, log [N]         - Retrieve telemetry decision audit records")
                         print("  query, sql <SQL>       - Run analytical SQL queries on DuckDB store")
-                        print("  chat, copilot <prompt> - Submit security questions to LLM Analyst Copilot")
                         print("  reports, incidents     - View generated SOC incident reports")
                         print("  exit, quit             - Safely terminate background processes and exit\n")
 
