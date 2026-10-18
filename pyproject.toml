@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kshark-ml"
+version = "0.1.0"
+description = "eBPF-ML Security Engine — KShark GUI + ML pipeline"
+requires-python = ">=3.11"
+dependencies = [
+    "pyqt6>=6.5",
+    "duckdb>=1.0",
+    "fastapi>=0.110",
+    "pydantic>=2.7",
+    "requests>=2.31",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "W", "I", "UP", "B", "C4", "N", "S", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"

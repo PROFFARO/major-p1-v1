@@ -100,3 +100,4 @@ agent/data/
 .claude/settings.local.json
 .claude/
 agent/data/
+.env
