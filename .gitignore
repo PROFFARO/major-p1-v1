@@ -98,3 +98,5 @@ agent/data/
 .claude/
 agent/data/
 .claude/settings.local.json
+.claude/
+agent/data/
