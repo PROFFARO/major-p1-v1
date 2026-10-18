@@ -163,7 +163,10 @@ class PIDWindow:
                     self.sensitive_hits += 1
                     break
 
-        # ── Privilege escalation tracking ──
+        # Enhanced: track module load attempts and module names for kernel rootkit detection
+        sys_module = ev.get("syscall") or ev.get("syscall_name") or ""
+        if isinstance(sys_module, str) and sys_module.lower() in ("init_module", "finit_module", "delete_module"):
+            self.priv_count += 1  # treat as privilege event for rootkit context
         if event_type == EVENT_PRIV:
             self.priv_count += 1
         elif event_type == EVENT_SYSCALL and syscall_id in PRIV_ESCALATION_SYSCALLS:

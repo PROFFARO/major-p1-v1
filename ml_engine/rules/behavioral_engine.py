@@ -58,6 +58,15 @@ class BehavioralEngine:
             self.falco_engine = None
 
     def _init_rules(self):
+        # Enhanced MITRE ATT&CK mapping for kernel-level threats
+        self.rules.extend([
+            BehavioralRule("FR-001", "Kernel Rootkit Load", "CRITICAL", "T1014",
+                "Module initialization or rootkit load via init_module/finit_module", lambda ev: ev.get("syscall_id") in {175,313,176}),
+            BehavioralRule("FR-002", "Privilege Escalation", "HIGH", "T1068",
+                "setuid/setgid/capset/syscalls executed", lambda ev: ev.get("syscall_id") in {105,106,113,114,117,119,125,160,308}),
+            BehavioralRule("FR-003", "Ransomware Write Pattern", "CRITICAL", "T1486",
+                "High write ratio + sensitive file access combined", lambda ev: ev.get("file_op")==3 and ev.get("filename","").startswith("/etc/")),
+        ])
         # 1. Ransomware Mass Encryption (T1486 - Data Encrypted for Impact)
         self.rules.append(
             BehavioralRule(
