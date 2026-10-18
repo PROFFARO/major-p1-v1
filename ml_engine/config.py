@@ -220,7 +220,7 @@ SEVERITY_LEVELS = {
 # ─────────────────────────────────────────────────────────────
 
 # Isolation Forest anomaly score threshold for triggering zero-day alert
-ANOMALY_SCORE_THRESHOLD = float(YAML_CONFIG_DATA.get("detection", {}).get("anomaly_score_threshold", -0.3))
+ANOMALY_SCORE_THRESHOLD = float(YAML_CONFIG_DATA.get("detection", {}).get("anomaly_score_threshold", -0.25))
 
 # Minimum confidence threshold for recording a high-fidelity threat detection alert
 DETECTION_ALERT_THRESHOLD = float(YAML_CONFIG_DATA.get("detection", {}).get("detection_alert_threshold", 0.70))

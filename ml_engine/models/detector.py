@@ -340,7 +340,7 @@ class ThreatDetector:
         return {
             "rf_result": rf_result,
             "xgb_result": xgb_result,
-            "consensus": True,  # Ensemble engine operates continuously without consensus block
+            "consensus": consensus,
             "agreed_threat": detected_threat,
             "anomaly_score": round(anomaly_score, 4),
             "is_anomaly": is_anomaly,
