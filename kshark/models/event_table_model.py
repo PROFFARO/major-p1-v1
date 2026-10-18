@@ -32,6 +32,7 @@ class EventTableModel(QAbstractTableModel):
         ("Network Destination", 160),
         ("Container Name", 130),
         ("Threat Class", 150),
+        ("ML Consensus", 90),
         ("Forensic Info", 280),
     ]
 
